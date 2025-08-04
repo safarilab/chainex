@@ -7,14 +7,29 @@ defmodule Chainex.Memory do
   buffers, persistent storage, and conversation history.
   """
 
-  defstruct [:type, :storage, :options]
+  defstruct [:type, :storage, :options, :pruning_config, :access_stats]
 
   @type memory_type :: :buffer | :persistent | :conversation | :vector
   @type storage :: map() | any()
+  @type pruning_strategy :: :lru | :lfu | :ttl | :hybrid
+  @type pruning_config :: %{
+          max_size: non_neg_integer() | :unlimited,
+          ttl_seconds: non_neg_integer() | :unlimited,
+          prune_strategy: pruning_strategy(),
+          prune_percentage: float(),
+          auto_prune: boolean()
+        }
+  @type access_stats :: %{
+          access_count: %{any() => non_neg_integer()},
+          last_access: %{any() => non_neg_integer()},
+          creation_time: %{any() => non_neg_integer()}
+        }
   @type t :: %__MODULE__{
           type: memory_type(),
           storage: storage(),
-          options: map()
+          options: map(),
+          pruning_config: pruning_config(),
+          access_stats: access_stats()
         }
 
   @doc """
@@ -40,11 +55,15 @@ defmodule Chainex.Memory do
   @spec new(memory_type(), map()) :: t()
   def new(type, options \\ %{}) when type in [:buffer, :persistent, :conversation, :vector] do
     storage = initialize_storage(type, options)
+    pruning_config = initialize_pruning_config(options)
+    access_stats = initialize_access_stats()
 
     %__MODULE__{
       type: type,
       storage: storage,
-      options: options
+      options: options,
+      pruning_config: pruning_config,
+      access_stats: access_stats
     }
   end
 
@@ -67,7 +86,11 @@ defmodule Chainex.Memory do
   @spec store(t(), any(), any()) :: t()
   def store(%__MODULE__{type: :buffer, storage: storage} = memory, key, value) do
     new_storage = Map.put(storage, key, value)
-    %{memory | storage: new_storage}
+    updated_memory = %{memory | storage: new_storage}
+    
+    updated_memory
+    |> update_creation_stats(key)
+    |> maybe_auto_prune()
   end
 
   def store(%__MODULE__{type: :conversation, storage: storage} = memory, key, value) do
@@ -81,7 +104,11 @@ defmodule Chainex.Memory do
     }
 
     new_storage = [entry | storage]
-    %{memory | storage: new_storage}
+    updated_memory = %{memory | storage: new_storage}
+    
+    updated_memory
+    |> update_creation_stats(key)
+    |> maybe_auto_prune()
   end
 
   def store(
@@ -94,7 +121,7 @@ defmodule Chainex.Memory do
     updated_memory = %{memory | storage: new_storage}
 
     # Persist to file
-    case persist_to_file(new_storage, options) do
+    final_memory = case persist_to_file(new_storage, options) do
       :ok ->
         updated_memory
 
@@ -103,6 +130,10 @@ defmodule Chainex.Memory do
         # This allows the system to continue working even if persistence fails
         updated_memory
     end
+    
+    final_memory
+    |> update_creation_stats(key)
+    |> maybe_auto_prune()
   end
 
   def store(%__MODULE__{type: :vector} = memory, key, value) do
@@ -279,12 +310,14 @@ defmodule Chainex.Memory do
   @spec delete(t(), any()) :: t()
   def delete(%__MODULE__{type: :buffer, storage: storage} = memory, key) do
     new_storage = Map.delete(storage, key)
-    %{memory | storage: new_storage}
+    updated_memory = %{memory | storage: new_storage}
+    clean_access_stats(updated_memory, key)
   end
 
   def delete(%__MODULE__{type: :conversation, storage: storage} = memory, key) do
     new_storage = Enum.reject(storage, fn entry -> entry.key == key end)
-    %{memory | storage: new_storage}
+    updated_memory = %{memory | storage: new_storage}
+    clean_access_stats(updated_memory, key)
   end
 
   def delete(%__MODULE__{type: :persistent, storage: storage, options: options} = memory, key) do
@@ -293,7 +326,7 @@ defmodule Chainex.Memory do
     updated_memory = %{memory | storage: new_storage}
 
     # Update persistent file
-    case persist_to_file(new_storage, options) do
+    final_memory = case persist_to_file(new_storage, options) do
       :ok ->
         updated_memory
 
@@ -302,10 +335,96 @@ defmodule Chainex.Memory do
         # This allows the system to continue working even if persistence fails
         updated_memory
     end
+    
+    clean_access_stats(final_memory, key)
   end
 
   def delete(%__MODULE__{type: :vector} = memory, key) do
     delete(%{memory | type: :buffer}, key)
+  end
+
+  @doc """
+  Manually triggers pruning based on the configured strategy
+
+  ## Examples
+
+      iex> memory = Memory.new(:buffer, %{max_size: 10, prune_strategy: :lru})
+      iex> pruned = Memory.prune(memory)
+      iex> Memory.size(pruned) <= 10
+      true
+  """
+  @spec prune(t()) :: t()
+  def prune(%__MODULE__{pruning_config: %{prune_strategy: strategy}} = memory) do
+    case should_prune?(memory) do
+      true -> do_prune(memory, strategy)
+      false -> memory
+    end
+  end
+
+  @doc """
+  Forces pruning regardless of current size or conditions
+
+  ## Examples
+
+      iex> memory = Memory.new(:buffer, %{max_size: 100})
+      iex> large_memory = Enum.reduce(1..10, memory, fn i, acc -> Memory.store(acc, String.to_atom("key_" <> Integer.to_string(i)), "value") end)
+      iex> pruned = Memory.force_prune(large_memory, :lru)
+      iex> Memory.size(pruned) < Memory.size(large_memory)
+      true
+  """
+  @spec force_prune(t(), pruning_strategy() | nil) :: t()
+  def force_prune(memory, strategy \\ nil) do
+    prune_strategy = strategy || memory.pruning_config.prune_strategy
+    do_prune(memory, prune_strategy)
+  end
+
+  @doc """
+  Removes expired entries based on TTL configuration
+
+  ## Examples
+
+      iex> memory = Memory.new(:buffer, %{ttl_seconds: 3600}) 
+      iex> _cleaned = Memory.cleanup_expired(memory)
+  """
+  @spec cleanup_expired(t()) :: t()
+  def cleanup_expired(%__MODULE__{pruning_config: %{ttl_seconds: :unlimited}} = memory) do
+    memory
+  end
+
+  def cleanup_expired(%__MODULE__{pruning_config: %{ttl_seconds: ttl}} = memory) do
+    current_time = :os.system_time(:second)
+    expired_keys = find_expired_keys(memory, current_time, ttl)
+
+    Enum.reduce(expired_keys, memory, fn key, acc ->
+      delete(acc, key)
+    end)
+  end
+
+  @doc """
+  Retrieves a value and updates access statistics for smart pruning
+
+  Returns {updated_memory, result} tuple where result is the same as retrieve/2
+
+  ## Examples
+
+      iex> memory = Memory.new(:buffer, %{max_size: 10})
+      iex> memory = Memory.store(memory, :key, "value")  
+      iex> {_updated_memory, {:ok, value}} = Memory.get_and_track(memory, :key)
+      iex> value
+      "value"
+  """
+  @spec get_and_track(t(), any()) :: {t(), {:ok, any()} | {:error, atom()}}
+  def get_and_track(memory, key) do
+    result = retrieve(memory, key)
+    
+    case result do
+      {:ok, _value} ->
+        updated_memory = update_access_stats(memory, key)
+        {updated_memory, result}
+      
+      {:error, _reason} ->
+        {memory, result}
+    end
   end
 
   # Private helper functions
@@ -386,5 +505,148 @@ defmodule Chainex.Memory do
 
   defp load_from_file(_options) do
     {:error, :no_file_path}
+  end
+
+  # Pruning helper functions
+
+  defp initialize_pruning_config(options) do
+    %{
+      max_size: Map.get(options, :max_size, :unlimited),
+      ttl_seconds: Map.get(options, :ttl_seconds, :unlimited),
+      prune_strategy: Map.get(options, :prune_strategy, :lru),
+      prune_percentage: Map.get(options, :prune_percentage, 0.2),
+      auto_prune: Map.get(options, :auto_prune, true)
+    }
+  end
+
+  defp initialize_access_stats do
+    %{
+      access_count: %{},
+      last_access: %{},
+      creation_time: %{}
+    }
+  end
+
+  defp update_creation_stats(%__MODULE__{access_stats: stats} = memory, key) do
+    current_time = :os.system_time(:second)
+    
+    updated_stats = %{
+      stats
+      | creation_time: Map.put(stats.creation_time, key, current_time),
+        access_count: Map.put_new(stats.access_count, key, 0)
+    }
+    
+    %{memory | access_stats: updated_stats}
+  end
+
+  defp update_access_stats(%__MODULE__{access_stats: stats} = memory, key) do
+    current_time = :os.system_time(:second)
+    current_count = Map.get(stats.access_count, key, 0)
+    
+    updated_stats = %{
+      stats
+      | access_count: Map.put(stats.access_count, key, current_count + 1),
+        last_access: Map.put(stats.last_access, key, current_time)
+    }
+    
+    %{memory | access_stats: updated_stats}
+  end
+
+  defp maybe_auto_prune(%__MODULE__{pruning_config: %{auto_prune: false}} = memory), do: memory
+  defp maybe_auto_prune(%__MODULE__{pruning_config: %{auto_prune: true}} = memory) do
+    case should_prune?(memory) do
+      true -> do_prune(memory, memory.pruning_config.prune_strategy)
+      false -> memory
+    end
+  end
+
+  defp should_prune?(%__MODULE__{pruning_config: %{max_size: :unlimited}}), do: false
+  defp should_prune?(%__MODULE__{pruning_config: %{max_size: max_size}} = memory) do
+    size(memory) > max_size
+  end
+
+  defp do_prune(memory, strategy) do
+    case strategy do
+      :lru -> prune_lru(memory)
+      :lfu -> prune_lfu(memory)
+      :ttl -> cleanup_expired(memory)
+      :hybrid -> prune_hybrid(memory)
+    end
+  end
+
+  defp prune_lru(%__MODULE__{pruning_config: %{prune_percentage: percentage}} = memory) do
+    current_size = size(memory)
+    target_removals = max(1, trunc(current_size * percentage))
+    
+    # Get keys sorted by last access time (oldest first)
+    # Use creation time as fallback for items never accessed
+    all_keys = keys(memory)
+    
+    keys_to_remove = 
+      all_keys
+      |> Enum.sort_by(fn key ->
+        # Use last_access if available, otherwise creation_time
+        Map.get(memory.access_stats.last_access, key) ||
+        Map.get(memory.access_stats.creation_time, key, 0)
+      end)
+      |> Enum.take(target_removals)
+    
+    remove_keys(memory, keys_to_remove)
+  end
+
+  defp prune_lfu(%__MODULE__{pruning_config: %{prune_percentage: percentage}} = memory) do
+    current_size = size(memory)
+    target_removals = max(1, trunc(current_size * percentage))
+    
+    # Get all keys and sort by access count (least used first)
+    all_keys = keys(memory)
+    
+    keys_to_remove = 
+      all_keys
+      |> Enum.sort_by(fn key ->
+        Map.get(memory.access_stats.access_count, key, 0)
+      end)
+      |> Enum.take(target_removals)
+    
+    remove_keys(memory, keys_to_remove)
+  end
+
+  defp prune_hybrid(memory) do
+    memory
+    |> cleanup_expired()
+    |> maybe_prune_by_access()
+  end
+
+  defp maybe_prune_by_access(%__MODULE__{pruning_config: %{max_size: max_size}} = memory) do
+    if size(memory) > max_size do
+      prune_lru(memory)
+    else
+      memory
+    end
+  end
+
+  defp find_expired_keys(memory, current_time, ttl_seconds) do
+    cutoff_time = current_time - ttl_seconds
+    
+    memory.access_stats.creation_time
+    |> Enum.filter(fn {_key, creation_time} -> creation_time < cutoff_time end)
+    |> Enum.map(fn {key, _time} -> key end)
+  end
+
+  defp remove_keys(memory, keys) do
+    Enum.reduce(keys, memory, fn key, acc ->
+      delete(acc, key)
+    end)
+  end
+
+  defp clean_access_stats(%__MODULE__{access_stats: stats} = memory, key) do
+    updated_stats = %{
+      stats
+      | access_count: Map.delete(stats.access_count, key),
+        last_access: Map.delete(stats.last_access, key),
+        creation_time: Map.delete(stats.creation_time, key)
+    }
+    
+    %{memory | access_stats: updated_stats}
   end
 end

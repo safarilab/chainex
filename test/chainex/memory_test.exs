@@ -436,4 +436,319 @@ defmodule Chainex.MemoryTest do
       assert first_entry.value.content == "Message 100"
     end
   end
+
+  describe "smart pruning functionality" do
+    test "initializes with default pruning config" do
+      memory = Memory.new(:buffer)
+
+      assert memory.pruning_config.max_size == :unlimited
+      assert memory.pruning_config.ttl_seconds == :unlimited
+      assert memory.pruning_config.prune_strategy == :lru
+      assert memory.pruning_config.prune_percentage == 0.2
+      assert memory.pruning_config.auto_prune == true
+    end
+
+    test "accepts custom pruning configuration" do
+      options = %{
+        max_size: 50,
+        ttl_seconds: 300,
+        prune_strategy: :lfu,
+        prune_percentage: 0.3,
+        auto_prune: false
+      }
+
+      memory = Memory.new(:buffer, options)
+
+      assert memory.pruning_config.max_size == 50
+      assert memory.pruning_config.ttl_seconds == 300
+      assert memory.pruning_config.prune_strategy == :lfu
+      assert memory.pruning_config.prune_percentage == 0.3
+      assert memory.pruning_config.auto_prune == false
+    end
+
+    test "tracks creation and access statistics" do
+      memory = Memory.new(:buffer, %{max_size: 10})
+
+      # Store some values
+      memory =
+        memory
+        |> Memory.store(:key1, "value1")
+        |> Memory.store(:key2, "value2")
+
+      # Check creation stats are tracked
+      assert Map.has_key?(memory.access_stats.creation_time, :key1)
+      assert Map.has_key?(memory.access_stats.creation_time, :key2)
+      assert Map.has_key?(memory.access_stats.access_count, :key1)
+      assert Map.has_key?(memory.access_stats.access_count, :key2)
+
+      # Track access
+      {updated_memory, {:ok, _}} = Memory.get_and_track(memory, :key1)
+
+      # Access count should be incremented
+      assert updated_memory.access_stats.access_count[:key1] == 1
+      assert Map.has_key?(updated_memory.access_stats.last_access, :key1)
+    end
+
+    test "auto prunes when max_size exceeded" do
+      memory = Memory.new(:buffer, %{max_size: 2, auto_prune: true, prune_percentage: 0.5})
+
+      # Store items up to limit
+      memory =
+        memory
+        |> Memory.store(:key1, "value1")
+        |> Memory.store(:key2, "value2")
+
+      assert Memory.size(memory) == 2
+
+      # Add one more - should trigger auto pruning
+      memory = Memory.store(memory, :key3, "value3")
+
+      # Should have pruned some items (50% of 3 = 1.5, truncated to 1)
+      assert Memory.size(memory) <= 2
+    end
+
+    test "LRU pruning removes least recently used items" do
+      memory = Memory.new(:buffer, %{max_size: 3, auto_prune: false, prune_strategy: :lru})
+
+      # Store items
+      memory =
+        memory
+        |> Memory.store(:old1, "value1")
+        |> Memory.store(:old2, "value2")
+        |> Memory.store(:new1, "value3")
+        |> Memory.store(:new2, "value4")
+
+      # Access some items to update their access time
+      {memory, _} = Memory.get_and_track(memory, :new1)
+      {memory, _} = Memory.get_and_track(memory, :new2)
+
+      # Manual prune
+      pruned = Memory.prune(memory)
+
+      # Should keep more recently accessed items
+      assert {:ok, _} = Memory.retrieve(pruned, :old2)
+      assert {:ok, _} = Memory.retrieve(pruned, :new1)
+      assert {:ok, _} = Memory.retrieve(pruned, :new2)
+    end
+
+    test "LFU pruning removes least frequently used items" do
+      memory = Memory.new(:buffer, %{max_size: 3, auto_prune: false, prune_strategy: :lfu})
+
+      # Store items
+      memory =
+        memory
+        |> Memory.store(:rare, "value1")
+        |> Memory.store(:common1, "value2")
+        |> Memory.store(:common2, "value3")
+        |> Memory.store(:extra, "value4")
+
+      # Access some items multiple times
+      {memory, _} = Memory.get_and_track(memory, :common1)
+      {memory, _} = Memory.get_and_track(memory, :common1)
+      {memory, _} = Memory.get_and_track(memory, :common2)
+      {memory, _} = Memory.get_and_track(memory, :common2)
+
+      # Manual prune
+      pruned = Memory.prune(memory)
+
+      # Should keep frequently accessed items
+      assert {:ok, _} = Memory.retrieve(pruned, :common1)
+      assert {:ok, _} = Memory.retrieve(pruned, :common2)
+
+      # Should remove least frequently used items (rare and extra have 0 access count)
+      # assert {:error, :not_found} = Memory.retrieve(pruned, :rare)
+      # Note: :extra might or might not be removed depending on which items are selected first
+      # but at least one of the unaccessed items should be gone
+      removed_count =
+        [:rare, :extra]
+        |> Enum.count(fn key -> Memory.retrieve(pruned, key) == {:error, :not_found} end)
+
+      assert removed_count >= 1
+    end
+
+    test "TTL cleanup removes expired entries" do
+      memory = Memory.new(:buffer, %{ttl_seconds: 1})
+
+      # Store an item
+      memory = Memory.store(memory, :temp, "temporary")
+
+      # Should exist initially
+      assert {:ok, "temporary"} = Memory.retrieve(memory, :temp)
+
+      # Wait for expiration (simulate by manually setting old creation time)
+      old_time = :os.system_time(:second) - 2
+
+      updated_stats = %{
+        memory.access_stats
+        | creation_time: Map.put(memory.access_stats.creation_time, :temp, old_time)
+      }
+
+      aged_memory = %{memory | access_stats: updated_stats}
+
+      # Cleanup expired
+      cleaned = Memory.cleanup_expired(aged_memory)
+
+      # Should be removed
+      assert {:error, :not_found} = Memory.retrieve(cleaned, :temp)
+    end
+
+    test "hybrid strategy combines TTL and LRU pruning" do
+      memory =
+        Memory.new(:buffer, %{
+          max_size: 3,
+          ttl_seconds: 1,
+          prune_strategy: :hybrid,
+          auto_prune: false
+        })
+
+      # Store items with different ages
+      memory =
+        memory
+        |> Memory.store(:old_expired, "value1")
+        |> Memory.store(:new_item, "value2")
+        |> Memory.store(:another_new, "value3")
+
+      # Simulate expiration for one item
+      old_time = :os.system_time(:second) - 2
+
+      updated_stats = %{
+        memory.access_stats
+        | creation_time: Map.put(memory.access_stats.creation_time, :old_expired, old_time)
+      }
+
+      aged_memory = %{memory | access_stats: updated_stats}
+
+      # Hybrid prune should remove expired first
+      pruned = Memory.force_prune(aged_memory, :hybrid)
+
+      # Expired item should be gone
+      assert {:error, :not_found} = Memory.retrieve(pruned, :old_expired)
+      # Non-expired items should remain
+      assert {:ok, _} = Memory.retrieve(pruned, :new_item)
+      assert {:ok, _} = Memory.retrieve(pruned, :another_new)
+    end
+
+    test "force_prune works regardless of auto_prune setting" do
+      memory = Memory.new(:buffer, %{max_size: 5, auto_prune: false})
+
+      # Fill beyond capacity
+      memory =
+        1..10
+        |> Enum.reduce(memory, fn i, acc ->
+          Memory.store(acc, :"key_#{i}", "value_#{i}")
+        end)
+
+      assert Memory.size(memory) == 10
+
+      # Force prune
+      pruned = Memory.force_prune(memory, :lru)
+
+      # Should be reduced
+      assert Memory.size(pruned) < 10
+    end
+
+    test "disabling auto_prune prevents automatic pruning" do
+      memory = Memory.new(:buffer, %{max_size: 2, auto_prune: false})
+
+      # Store beyond capacity
+      memory =
+        memory
+        |> Memory.store(:key1, "value1")
+        |> Memory.store(:key2, "value2")
+        |> Memory.store(:key3, "value3")
+
+      # Should not auto-prune
+      assert Memory.size(memory) == 3
+    end
+
+    test "conversation memory supports pruning" do
+      memory = Memory.new(:conversation, %{max_size: 2, prune_percentage: 0.5})
+
+      # Add multiple conversation entries
+      memory =
+        memory
+        |> Memory.store(:msg1, %{role: "user", content: "First"})
+        |> Memory.store(:msg2, %{role: "assistant", content: "Second"})
+        |> Memory.store(:msg3, %{role: "user", content: "Third"})
+
+      # Should have pruned (auto_prune is true by default)
+      assert Memory.size(memory) <= 2
+    end
+
+    test "persistent memory supports pruning" do
+      temp_file = "/tmp/chainex_pruning_test_#{:erlang.unique_integer([:positive])}.dat"
+      on_exit(fn -> File.rm(temp_file) end)
+
+      memory =
+        Memory.new(:persistent, %{
+          file_path: temp_file,
+          max_size: 2,
+          prune_percentage: 0.5
+        })
+
+      # Store beyond capacity
+      memory =
+        memory
+        |> Memory.store(:key1, "value1")
+        |> Memory.store(:key2, "value2")
+        |> Memory.store(:key3, "value3")
+
+      # Should have auto-pruned
+      assert Memory.size(memory) <= 2
+
+      # Verify persistence works with pruning
+      fresh_memory = Memory.new(:persistent, %{file_path: temp_file})
+      assert Memory.size(fresh_memory) <= 2
+    end
+
+    test "get_and_track updates access statistics" do
+      memory = Memory.new(:buffer)
+      memory = Memory.store(memory, :test_key, "test_value")
+
+      # Initial access count should be 0
+      assert memory.access_stats.access_count[:test_key] == 0
+
+      # Track access
+      {updated_memory, {:ok, "test_value"}} = Memory.get_and_track(memory, :test_key)
+
+      # Access count should be incremented
+      assert updated_memory.access_stats.access_count[:test_key] == 1
+      assert Map.has_key?(updated_memory.access_stats.last_access, :test_key)
+
+      # Track another access
+      {updated_memory2, {:ok, "test_value"}} = Memory.get_and_track(updated_memory, :test_key)
+      assert updated_memory2.access_stats.access_count[:test_key] == 2
+    end
+
+    test "get_and_track handles missing keys" do
+      memory = Memory.new(:buffer)
+
+      # Should handle missing key gracefully
+      {updated_memory, {:error, :not_found}} = Memory.get_and_track(memory, :missing)
+
+      # Memory should be unchanged
+      assert updated_memory == memory
+    end
+
+    test "pruning config validation with unlimited values" do
+      memory =
+        Memory.new(:buffer, %{
+          max_size: :unlimited,
+          ttl_seconds: :unlimited
+        })
+
+      # Should not prune with unlimited settings
+      memory =
+        1..100
+        |> Enum.reduce(memory, fn i, acc ->
+          Memory.store(acc, :"key_#{i}", "value_#{i}")
+        end)
+
+      assert Memory.size(memory) == 100
+
+      # Manual prune should not reduce size with unlimited max_size
+      pruned = Memory.prune(memory)
+      assert Memory.size(pruned) == 100
+    end
+  end
 end
