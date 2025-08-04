@@ -168,7 +168,6 @@ defmodule Chainex.Tool do
         case tool.function.(validated_params) do
           {:ok, result} -> {:ok, result}
           {:error, reason} -> {:error, reason}
-          result -> {:ok, result}  # Handle functions that return raw values
         end
       rescue
         e -> {:error, {:function_error, Exception.message(e)}}
@@ -257,7 +256,7 @@ defmodule Chainex.Tool do
 
       iex> tool = Tool.new(
       ...>   name: "test",
-      ...>   description: "Test tool", 
+      ...>   description: "Test tool",
       ...>   parameters: %{
       ...>     name: %{type: :string, required: true},
       ...>     count: %{type: :integer, default: 5},
@@ -327,18 +326,21 @@ defmodule Chainex.Tool do
   defp validate_function(_), do: {:error, {:invalid_tool, "Function must be a 1-arity function"}}
 
   defp valid_parameter_schema?(schema) when is_map(schema) do
-    has_valid_type = Map.has_key?(schema, :type) and 
-                     schema.type in [:string, :integer, :float, :number, :boolean, :list, :map, :atom]
-    
+    has_valid_type =
+      Map.has_key?(schema, :type) and
+        schema.type in [:string, :integer, :float, :number, :boolean, :list, :map, :atom]
+
     # Check enum values if present
-    enum_valid = case Map.get(schema, :enum) do
-      nil -> true
-      enum_list when is_list(enum_list) -> true
-      _ -> false
-    end
+    enum_valid =
+      case Map.get(schema, :enum) do
+        nil -> true
+        enum_list when is_list(enum_list) -> true
+        _ -> false
+      end
 
     has_valid_type and enum_valid
   end
+
   defp valid_parameter_schema?(_), do: false
 
   defp validate_and_prepare_params(schema, params) do
@@ -359,7 +361,7 @@ defmodule Chainex.Tool do
   end
 
   defp check_required_params(schema, params) do
-    required_keys = 
+    required_keys =
       schema
       |> Enum.filter(fn {_key, param_schema} -> Map.get(param_schema, :required, false) end)
       |> Enum.map(fn {key, _schema} -> key end)
@@ -377,8 +379,11 @@ defmodule Chainex.Tool do
       params
       |> Enum.map(fn {key, value} ->
         case Map.get(schema, key) do
-          nil -> {key, value}  # Allow extra parameters
-          param_schema -> 
+          # Allow extra parameters
+          nil ->
+            {key, value}
+
+          param_schema ->
             case validate_param_value(value, param_schema) do
               {:ok, validated_value} -> {key, validated_value}
               {:error, reason} -> {:error, {key, reason}}
@@ -388,13 +393,14 @@ defmodule Chainex.Tool do
 
     # Check for any validation errors
     case Enum.find(validated_params, fn
-      {:error, _} -> true
-      _ -> false
-    end) do
-      nil -> 
+           {:error, _} -> true
+           _ -> false
+         end) do
+      nil ->
         valid_params = Enum.into(validated_params, %{})
         {:ok, valid_params}
-      {:error, {key, reason}} -> 
+
+      {:error, {key, reason}} ->
         {:error, {:invalid_parameter_value, key, reason}}
     end
   end
@@ -479,6 +485,7 @@ defmodule Chainex.Tool do
       {:error, "must be one of #{inspect(enum)}"}
     end
   end
+
   defp check_enum_constraint(_value, _schema), do: :ok
 
   defp check_pattern_constraint(value, %{pattern: pattern}) when is_binary(value) do
@@ -488,6 +495,7 @@ defmodule Chainex.Tool do
       {:error, "must match pattern #{inspect(pattern)}"}
     end
   end
+
   defp check_pattern_constraint(_value, _schema), do: :ok
 
   defp check_min_constraint(value, %{min: min}) when is_number(value) and is_number(min) do
@@ -497,6 +505,7 @@ defmodule Chainex.Tool do
       {:error, "must be >= #{min}"}
     end
   end
+
   defp check_min_constraint(_value, _schema), do: :ok
 
   defp check_max_constraint(value, %{max: max}) when is_number(value) and is_number(max) do
@@ -506,6 +515,7 @@ defmodule Chainex.Tool do
       {:error, "must be <= #{max}"}
     end
   end
+
   defp check_max_constraint(_value, _schema), do: :ok
 end
 
@@ -543,7 +553,7 @@ defmodule Chainex.Tool.Registry do
   """
   @spec new([Chainex.Tool.t()], map()) :: t()
   def new(tools \\ [], options \\ %{}) do
-    tool_map = 
+    tool_map =
       tools
       |> Enum.map(fn tool -> {tool.name, tool} end)
       |> Enum.into(%{})
@@ -727,11 +737,11 @@ defmodule Chainex.Tool.Registry do
   @spec validate_all(t()) :: :ok | {:error, term()}
   def validate_all(%__MODULE__{tools: tools}) do
     case Enum.find(tools, fn {_name, tool} ->
-      case Chainex.Tool.validate_definition(tool) do
-        :ok -> false
-        {:error, _} -> true
-      end
-    end) do
+           case Chainex.Tool.validate_definition(tool) do
+             :ok -> false
+             {:error, _} -> true
+           end
+         end) do
       nil -> :ok
       {name, _tool} -> {:error, {:invalid_tool_in_registry, name}}
     end

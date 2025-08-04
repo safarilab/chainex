@@ -40,7 +40,7 @@ defmodule Chainex.Memory do
   @spec new(memory_type(), map()) :: t()
   def new(type, options \\ %{}) when type in [:buffer, :persistent, :conversation, :vector] do
     storage = initialize_storage(type, options)
-    
+
     %__MODULE__{
       type: type,
       storage: storage,
@@ -72,26 +72,33 @@ defmodule Chainex.Memory do
 
   def store(%__MODULE__{type: :conversation, storage: storage} = memory, key, value) do
     timestamp = :os.system_time(:millisecond)
+
     entry = %{
       key: key,
       value: value,
       timestamp: timestamp,
       id: generate_id()
     }
-    
+
     new_storage = [entry | storage]
     %{memory | storage: new_storage}
   end
 
-  def store(%__MODULE__{type: :persistent, storage: storage, options: options} = memory, key, value) do
+  def store(
+        %__MODULE__{type: :persistent, storage: storage, options: options} = memory,
+        key,
+        value
+      ) do
     # Update in-memory storage first
     new_storage = Map.put(storage, key, value)
     updated_memory = %{memory | storage: new_storage}
-    
+
     # Persist to file
     case persist_to_file(new_storage, options) do
-      :ok -> updated_memory
-      {:error, _reason} -> 
+      :ok ->
+        updated_memory
+
+      {:error, _reason} ->
         # On file write error, still return updated memory (data exists in memory)
         # This allows the system to continue working even if persistence fails
         updated_memory
@@ -136,7 +143,7 @@ defmodule Chainex.Memory do
   def retrieve(%__MODULE__{type: :persistent, storage: storage, options: options}, key) do
     # First try in-memory storage for performance
     case Map.get(storage, key) do
-      nil -> 
+      nil ->
         # If not in memory, try to load from file and check again
         case load_from_file(options) do
           {:ok, file_storage} ->
@@ -144,9 +151,13 @@ defmodule Chainex.Memory do
               nil -> {:error, :not_found}
               value -> {:ok, value}
             end
-          {:error, _reason} -> {:error, :not_found}
+
+          {:error, _reason} ->
+            {:error, :not_found}
         end
-      value -> {:ok, value}
+
+      value ->
+        {:ok, value}
     end
   end
 
@@ -181,11 +192,12 @@ defmodule Chainex.Memory do
   def keys(%__MODULE__{type: :persistent, storage: storage, options: options}) do
     # Combine in-memory keys with file keys
     memory_keys = Map.keys(storage)
-    
+
     case load_from_file(options) do
       {:ok, file_storage} ->
         file_keys = Map.keys(file_storage)
         (memory_keys ++ file_keys) |> Enum.uniq()
+
       {:error, _reason} ->
         memory_keys
     end
@@ -220,12 +232,13 @@ defmodule Chainex.Memory do
   def size(%__MODULE__{type: :persistent, storage: storage, options: options}) do
     # Count unique keys from both memory and file
     memory_size = map_size(storage)
-    
+
     case load_from_file(options) do
       {:ok, file_storage} ->
         # Count unique keys across both storages
         all_keys = Map.keys(storage) ++ Map.keys(file_storage)
         length(Enum.uniq(all_keys))
+
       {:error, _reason} ->
         memory_size
     end
@@ -278,18 +291,20 @@ defmodule Chainex.Memory do
     # Remove from in-memory storage
     new_storage = Map.delete(storage, key)
     updated_memory = %{memory | storage: new_storage}
-    
+
     # Update persistent file
     case persist_to_file(new_storage, options) do
-      :ok -> updated_memory
-      {:error, _reason} -> 
+      :ok ->
+        updated_memory
+
+      {:error, _reason} ->
         # On file write error, still return updated memory (data deleted from memory)
         # This allows the system to continue working even if persistence fails
         updated_memory
     end
   end
 
-  def delete(%__MODULE__{type: :vector} = memory, key) do 
+  def delete(%__MODULE__{type: :vector} = memory, key) do
     delete(%{memory | type: :buffer}, key)
   end
 
@@ -297,6 +312,7 @@ defmodule Chainex.Memory do
 
   defp initialize_storage(:buffer, _options), do: %{}
   defp initialize_storage(:conversation, _options), do: []
+
   defp initialize_storage(:persistent, options) do
     # Try to load existing data from file, fallback to empty map
     case load_from_file(options) do
@@ -304,6 +320,7 @@ defmodule Chainex.Memory do
       {:error, _reason} -> %{}
     end
   end
+
   defp initialize_storage(:vector, _options), do: %{}
 
   defp generate_id do
@@ -318,21 +335,26 @@ defmodule Chainex.Memory do
     try do
       # Ensure directory exists
       file_path |> Path.dirname() |> File.mkdir_p!()
-      
+
       # Serialize data to binary format
       data = :erlang.term_to_binary(storage, [:compressed])
-      
+
       # Write to file atomically (write to temp file, then rename)
       temp_path = file_path <> ".tmp"
+
       case File.write(temp_path, data) do
         :ok ->
           case File.rename(temp_path, file_path) do
-            :ok -> :ok
-            {:error, reason} -> 
+            :ok ->
+              :ok
+
+            {:error, reason} ->
               File.rm(temp_path)
               {:error, reason}
           end
-        {:error, reason} -> {:error, reason}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     rescue
       e -> {:error, e}
@@ -352,8 +374,13 @@ defmodule Chainex.Memory do
         rescue
           _ -> {:error, :corrupt_file}
         end
-      {:error, :enoent} -> {:ok, %{}}  # File doesn't exist yet, return empty storage
-      {:error, reason} -> {:error, reason}
+
+      # File doesn't exist yet, return empty storage
+      {:error, :enoent} ->
+        {:ok, %{}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

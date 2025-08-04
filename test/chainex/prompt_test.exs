@@ -39,7 +39,7 @@ defmodule Chainex.PromptTest do
   describe "render/2 with mustache templates" do
     test "renders simple variable substitution" do
       prompt = Prompt.new("Hello {{name}}!")
-      
+
       assert {:ok, "Hello Alice!"} = Prompt.render(prompt, %{name: "Alice"})
     end
 
@@ -54,6 +54,7 @@ defmodule Chainex.PromptTest do
     test "renders nested object access" do
       template = "User: {{user.name}} ({{user.email}})"
       prompt = Prompt.new(template)
+
       variables = %{
         user: %{
           name: "Charlie",
@@ -67,6 +68,7 @@ defmodule Chainex.PromptTest do
     test "handles string keys for nested access" do
       template = "{{user.name}} works at {{user.company}}"
       prompt = Prompt.new(template)
+
       variables = %{
         "user" => %{
           "name" => "David",
@@ -79,20 +81,21 @@ defmodule Chainex.PromptTest do
 
     test "handles missing variables in non-strict mode" do
       prompt = Prompt.new("Hello {{name}}, welcome {{missing}}!")
-      
+
       assert {:ok, "Hello Alice, welcome !"} = Prompt.render(prompt, %{name: "Alice"})
     end
 
     test "returns error for missing variables in strict mode" do
       options = %{strict: true}
       prompt = Prompt.new("Hello {{missing}}!", %{}, options)
-      
+
       assert {:error, {:missing_variable, "missing"}} = Prompt.render(prompt, %{})
     end
 
     test "handles different data types" do
       template = "String: {{str}}, Number: {{num}}, Boolean: {{bool}}, Atom: {{atom}}"
       prompt = Prompt.new(template)
+
       variables = %{
         str: "text",
         num: 42,
@@ -106,13 +109,13 @@ defmodule Chainex.PromptTest do
 
     test "uses pre-loaded variables from prompt" do
       prompt = Prompt.new("{{greeting}} {{name}}!", %{greeting: "Hello"})
-      
+
       assert {:ok, "Hello Alice!"} = Prompt.render(prompt, %{name: "Alice"})
     end
 
     test "merges variables with render-time taking precedence" do
       prompt = Prompt.new("{{name}} is {{age}}", %{name: "Original", age: 25})
-      
+
       assert {:ok, "Updated is 25"} = Prompt.render(prompt, %{name: "Updated"})
     end
   end
@@ -121,7 +124,7 @@ defmodule Chainex.PromptTest do
     test "renders python-style templates" do
       options = %{format: :python}
       prompt = Prompt.new("Hello {name}!", %{}, options)
-      
+
       assert {:ok, "Hello Python!"} = Prompt.render(prompt, %{name: "Python"})
     end
 
@@ -129,6 +132,7 @@ defmodule Chainex.PromptTest do
       options = %{format: :python}
       template = "User {user.name} has {user.points} points"
       prompt = Prompt.new(template, %{}, options)
+
       variables = %{
         user: %{
           name: "Eve",
@@ -143,14 +147,14 @@ defmodule Chainex.PromptTest do
   describe "render!/2" do
     test "returns result directly on success" do
       prompt = Prompt.new("Hello {{name}}!")
-      
+
       assert "Hello World!" == Prompt.render!(prompt, %{name: "World"})
     end
 
     test "raises on error" do
       options = %{strict: true}
       prompt = Prompt.new("Hello {{missing}}!", %{}, options)
-      
+
       assert_raise ArgumentError, fn ->
         Prompt.render!(prompt, %{})
       end
@@ -176,23 +180,33 @@ defmodule Chainex.PromptTest do
 
     test "catches unclosed mustache tags" do
       prompt = Prompt.new("Hello {{name")
-      assert {:error, {:invalid_syntax, "Unclosed template tag at position 6"}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Unclosed template tag at position 6"}} =
+               Prompt.validate(prompt)
 
       prompt = Prompt.new("Hello {{name}} and {{age")
-      assert {:error, {:invalid_syntax, "Unclosed template tag at position " <> _}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Unclosed template tag at position " <> _}} =
+               Prompt.validate(prompt)
     end
 
     test "catches unclosed python tags" do
       prompt = Prompt.new("Hello {name", %{}, %{format: :python})
-      assert {:error, {:invalid_syntax, "Unclosed template tag at position 6"}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Unclosed template tag at position 6"}} =
+               Prompt.validate(prompt)
     end
 
     test "catches unopened closing tags" do
       prompt = Prompt.new("Hello name}} world")
-      assert {:error, {:invalid_syntax, "Unopened template tag at position " <> _}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Unopened template tag at position " <> _}} =
+               Prompt.validate(prompt)
 
       prompt = Prompt.new("Hello name} world", %{}, %{format: :python})
-      assert {:error, {:invalid_syntax, "Unopened template tag at position " <> _}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Unopened template tag at position " <> _}} =
+               Prompt.validate(prompt)
     end
 
     test "catches empty variable names" do
@@ -206,22 +220,32 @@ defmodule Chainex.PromptTest do
     test "catches invalid variable names" do
       # Variable names starting with dots
       prompt = Prompt.new("Hello {{.invalid}}!")
-      assert {:error, {:invalid_syntax, "Invalid variable name '.invalid'"}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Invalid variable name '.invalid'"}} =
+               Prompt.validate(prompt)
 
       # Variable names ending with dots
       prompt = Prompt.new("Hello {{invalid.}}!")
-      assert {:error, {:invalid_syntax, "Invalid variable name 'invalid.'"}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Invalid variable name 'invalid.'"}} =
+               Prompt.validate(prompt)
 
       # Variable names with consecutive dots
       prompt = Prompt.new("Hello {{user..name}}!")
-      assert {:error, {:invalid_syntax, "Invalid variable name 'user..name'"}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Invalid variable name 'user..name'"}} =
+               Prompt.validate(prompt)
 
       # Variable names with invalid characters
       prompt = Prompt.new("Hello {{user-name}}!")
-      assert {:error, {:invalid_syntax, "Invalid variable name 'user-name'"}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Invalid variable name 'user-name'"}} =
+               Prompt.validate(prompt)
 
       prompt = Prompt.new("Hello {{user@domain}}!")
-      assert {:error, {:invalid_syntax, "Invalid variable name 'user@domain'"}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Invalid variable name 'user@domain'"}} =
+               Prompt.validate(prompt)
     end
 
     test "allows valid nested variable names" do
@@ -246,7 +270,7 @@ defmodule Chainex.PromptTest do
       You have {{notifications.count}} new notifications.
       Last login: {{user.last_login}}.
       """
-      
+
       prompt = Prompt.new(template)
       assert :ok = Prompt.validate(prompt)
     end
@@ -256,7 +280,9 @@ defmodule Chainex.PromptTest do
       assert :ok = Prompt.validate(prompt)
 
       prompt = Prompt.new("Hello {.invalid}", %{}, %{format: :python})
-      assert {:error, {:invalid_syntax, "Invalid variable name '.invalid'"}} = Prompt.validate(prompt)
+
+      assert {:error, {:invalid_syntax, "Invalid variable name '.invalid'"}} =
+               Prompt.validate(prompt)
     end
   end
 
@@ -264,7 +290,7 @@ defmodule Chainex.PromptTest do
     test "extracts all variables from template" do
       template = "Hello {{name}}, you are {{age}} years old and live in {{city}}!"
       prompt = Prompt.new(template)
-      
+
       variables = Prompt.variables(prompt)
       assert length(variables) == 3
       assert "name" in variables
@@ -275,7 +301,7 @@ defmodule Chainex.PromptTest do
     test "extracts nested variables" do
       template = "User {{user.name}} ({{user.email}}) from {{user.address.city}}"
       prompt = Prompt.new(template)
-      
+
       variables = Prompt.variables(prompt)
       assert "user.name" in variables
       assert "user.email" in variables
@@ -285,7 +311,7 @@ defmodule Chainex.PromptTest do
     test "returns unique variables only" do
       template = "{{name}} {{name}} {{age}} {{name}}"
       prompt = Prompt.new(template)
-      
+
       variables = Prompt.variables(prompt)
       assert length(variables) == 2
       assert "name" in variables
@@ -296,7 +322,7 @@ defmodule Chainex.PromptTest do
       options = %{format: :python}
       template = "Hello {name}, you are {age} years old"
       prompt = Prompt.new(template, %{}, options)
-      
+
       variables = Prompt.variables(prompt)
       assert "name" in variables
       assert "age" in variables
@@ -306,14 +332,14 @@ defmodule Chainex.PromptTest do
   describe "compile/2" do
     test "creates reusable template function" do
       compiled = Prompt.compile("Hello {{name}}!")
-      
+
       assert "Hello Alice!" == compiled.(%{name: "Alice"})
       assert "Hello Bob!" == compiled.(%{name: "Bob"})
     end
 
     test "compiled function raises on missing variables in strict mode" do
       compiled = Prompt.compile("Hello {{name}}!", %{strict: true})
-      
+
       assert_raise ArgumentError, fn ->
         compiled.(%{})
       end
@@ -321,7 +347,7 @@ defmodule Chainex.PromptTest do
 
     test "works with python format" do
       compiled = Prompt.compile("Hello {name}!", %{format: :python})
-      
+
       assert "Hello Python!" == compiled.(%{name: "Python"})
     end
   end
@@ -329,30 +355,30 @@ defmodule Chainex.PromptTest do
   describe "formatting options" do
     test "trims whitespace by default" do
       prompt = Prompt.new("  Hello {{name}}!  ")
-      
+
       assert {:ok, "Hello Alice!"} = Prompt.render(prompt, %{name: "Alice"})
     end
 
     test "preserves whitespace when disabled" do
       options = %{trim_whitespace: false}
       prompt = Prompt.new("  Hello {{name}}!  ", %{}, options)
-      
+
       assert {:ok, "  Hello Alice!  "} = Prompt.render(prompt, %{name: "Alice"})
     end
 
     test "escapes HTML when enabled" do
       options = %{escape_html: true}
       prompt = Prompt.new("Content: {{content}}", %{}, options)
-      
+
       variables = %{content: "<script>alert('xss')</script>"}
       expected = "Content: &lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;"
-      
+
       assert {:ok, ^expected} = Prompt.render(prompt, variables)
     end
 
     test "does not escape HTML by default" do
       prompt = Prompt.new("Content: {{content}}")
-      
+
       variables = %{content: "<b>bold</b>"}
       assert {:ok, "Content: <b>bold</b>"} = Prompt.render(prompt, variables)
     end
@@ -361,26 +387,26 @@ defmodule Chainex.PromptTest do
   describe "edge cases and error handling" do
     test "handles empty template" do
       prompt = Prompt.new("")
-      
+
       assert {:ok, ""} = Prompt.render(prompt, %{name: "Alice"})
     end
 
     test "handles template with no variables" do
       prompt = Prompt.new("Static text only")
-      
+
       assert {:ok, "Static text only"} = Prompt.render(prompt, %{unused: "value"})
     end
 
     test "handles nil values" do
       prompt = Prompt.new("Value: {{value}}")
-      
+
       assert {:ok, "Value:"} = Prompt.render(prompt, %{value: nil})
     end
 
     test "handles complex nested structures" do
       template = "{{data.user.profile.name}} has {{data.stats.points}} points"
       prompt = Prompt.new(template)
-      
+
       variables = %{
         data: %{
           user: %{
@@ -389,19 +415,19 @@ defmodule Chainex.PromptTest do
           stats: %{points: 500}
         }
       }
-      
+
       assert {:ok, "DeepNest has 500 points"} = Prompt.render(prompt, variables)
     end
 
     test "handles lists and maps in variables" do
       template = "Items: {{items}}, Config: {{config}}"
       prompt = Prompt.new(template)
-      
+
       variables = %{
         items: [1, 2, 3],
         config: %{debug: true, timeout: 30}
       }
-      
+
       {:ok, result} = Prompt.render(prompt, variables)
       assert String.contains?(result, "Items: [1, 2, 3]")
       assert String.contains?(result, "Config:")
@@ -409,9 +435,9 @@ defmodule Chainex.PromptTest do
 
     test "template is immutable" do
       original = Prompt.new("Hello {{name}}!", %{name: "Original"})
-      
+
       {:ok, _result} = Prompt.render(original, %{name: "Updated"})
-      
+
       # Original should be unchanged
       assert original.variables.name == "Original"
     end
@@ -424,21 +450,22 @@ defmodule Chainex.PromptTest do
         "City: {{city}}",
         "Status: {{status}}"
       ]
-      
+
       variables = %{
         name: "Alice",
         age: 25,
-        city: "NYC", 
+        city: "NYC",
         status: "active"
       }
-      
+
       # Should render all templates without issues
-      results = Enum.map(templates, fn template ->
-        prompt = Prompt.new(template)
-        {:ok, result} = Prompt.render(prompt, variables)
-        result
-      end)
-      
+      results =
+        Enum.map(templates, fn template ->
+          prompt = Prompt.new(template)
+          {:ok, result} = Prompt.render(prompt, variables)
+          result
+        end)
+
       assert Enum.at(results, 0) == "Hello Alice!"
       assert Enum.at(results, 1) == "Age: 25"
       assert Enum.at(results, 2) == "City: NYC"
@@ -453,10 +480,10 @@ defmodule Chainex.PromptTest do
         user: %{name: "Integration", role: "admin"},
         session: %{id: "sess_123", expires: "2024-12-31"}
       }
-      
+
       template = "Welcome {{user.name}} ({{user.role}})! Session: {{session.id}}"
       prompt = Prompt.new(template)
-      
+
       {:ok, result} = Prompt.render(prompt, context_vars)
       assert result == "Welcome Integration (admin)! Session: sess_123"
     end

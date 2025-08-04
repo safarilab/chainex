@@ -49,7 +49,7 @@ defmodule Chainex.MemoryTest do
 
     test "stores and retrieves values", %{memory: memory} do
       updated = Memory.store(memory, :name, "Alice")
-      
+
       assert {:ok, "Alice"} = Memory.retrieve(updated, :name)
     end
 
@@ -58,7 +58,7 @@ defmodule Chainex.MemoryTest do
     end
 
     test "overwrites existing values", %{memory: memory} do
-      memory = 
+      memory =
         memory
         |> Memory.store(:count, 1)
         |> Memory.store(:count, 5)
@@ -145,7 +145,7 @@ defmodule Chainex.MemoryTest do
 
       assert {:ok, ^message} = Memory.retrieve(updated, :message1)
       assert length(updated.storage) == 1
-      
+
       [entry] = updated.storage
       assert entry.key == :message1
       assert entry.value == message
@@ -162,11 +162,11 @@ defmodule Chainex.MemoryTest do
 
       # Most recent should be first (prepended to list)
       [latest, middle, oldest] = memory.storage
-      
+
       assert latest.value.content == "Third"
       assert middle.value.content == "Second"
       assert oldest.value.content == "First"
-      
+
       # But timestamps should reflect actual order
       assert latest.timestamp >= middle.timestamp
       assert middle.timestamp >= oldest.timestamp
@@ -188,10 +188,12 @@ defmodule Chainex.MemoryTest do
         memory
         |> Memory.store(:msg1, "First")
         |> Memory.store(:msg2, "Second")
-        |> Memory.store(:msg1, "Updated First")  # Same key again
+        # Same key again
+        |> Memory.store(:msg1, "Updated First")
 
       keys = Memory.keys(memory)
-      assert length(keys) == 2  # Should only have unique keys
+      # Should only have unique keys
+      assert length(keys) == 2
       assert :msg1 in keys
       assert :msg2 in keys
     end
@@ -222,7 +224,7 @@ defmodule Chainex.MemoryTest do
 
       updated = Memory.delete(memory, :delete)
       assert Memory.size(updated) == 2
-      
+
       # Should only have :keep entries
       keys = Memory.keys(updated)
       assert :keep in keys
@@ -242,10 +244,10 @@ defmodule Chainex.MemoryTest do
       # Store a value
       updated = Memory.store(memory, :key, "persistent_value")
       assert {:ok, "persistent_value"} = Memory.retrieve(updated, :key)
-      
+
       # Verify file was created
       assert File.exists?(temp_file)
-      
+
       # Create new memory instance and verify data persisted
       new_memory = Memory.new(:persistent, %{file_path: temp_file})
       assert {:ok, "persistent_value"} = Memory.retrieve(new_memory, :key)
@@ -263,7 +265,7 @@ defmodule Chainex.MemoryTest do
       assert {:ok, "Alice"} = Memory.retrieve(memory, :name)
       assert {:ok, 25} = Memory.retrieve(memory, :age)
       assert {:ok, "NYC"} = Memory.retrieve(memory, :city)
-      
+
       # Create fresh memory instance and verify persistence
       fresh_memory = Memory.new(:persistent, %{file_path: temp_file})
       assert {:ok, "Alice"} = Memory.retrieve(fresh_memory, :name)
@@ -275,10 +277,10 @@ defmodule Chainex.MemoryTest do
       # Store and delete values
       memory = Memory.store(memory, :temp, "temporary")
       assert {:ok, "temporary"} = Memory.retrieve(memory, :temp)
-      
+
       updated = Memory.delete(memory, :temp)
       assert {:error, :not_found} = Memory.retrieve(updated, :temp)
-      
+
       # Verify deletion persisted to file
       fresh_memory = Memory.new(:persistent, %{file_path: temp_file})
       assert {:error, :not_found} = Memory.retrieve(fresh_memory, :temp)
@@ -298,21 +300,21 @@ defmodule Chainex.MemoryTest do
       assert :a in keys
       assert :b in keys
       assert :c in keys
-      
+
       # Verify with fresh memory instance
       fresh_memory = Memory.new(:persistent, %{file_path: temp_file})
       assert Memory.size(fresh_memory) == 3
       fresh_keys = Memory.keys(fresh_memory)
       assert length(fresh_keys) == 3
       assert :a in fresh_keys
-      assert :b in fresh_keys  
+      assert :b in fresh_keys
       assert :c in fresh_keys
     end
 
     test "handles missing file gracefully", %{temp_file: temp_file} do
       # Create memory with non-existent file
       memory = Memory.new(:persistent, %{file_path: temp_file})
-      
+
       # Should work normally with empty storage
       assert Memory.size(memory) == 0
       assert Memory.keys(memory) == []
@@ -322,7 +324,7 @@ defmodule Chainex.MemoryTest do
     test "handles invalid file path" do
       # Memory without file_path should fail gracefully
       memory = Memory.new(:persistent, %{})
-      
+
       # Store should not crash but data won't persist
       updated = Memory.store(memory, :key, "value")
       # Should still work in memory
@@ -332,7 +334,7 @@ defmodule Chainex.MemoryTest do
     test "handles corrupted file gracefully", %{temp_file: temp_file} do
       # Create corrupted file
       File.write!(temp_file, "not_valid_erlang_term")
-      
+
       # Should fallback to empty storage
       memory = Memory.new(:persistent, %{file_path: temp_file})
       assert Memory.size(memory) == 0
@@ -342,11 +344,11 @@ defmodule Chainex.MemoryTest do
     test "atomic file operations", %{memory: memory, temp_file: temp_file} do
       # Store a value
       updated = Memory.store(memory, :atomic_test, "original")
-      
+
       # Verify temp file is cleaned up (atomic operation)
       temp_files = Path.wildcard(temp_file <> ".*")
       assert temp_files == []
-      
+
       # Verify data integrity
       assert {:ok, "original"} = Memory.retrieve(updated, :atomic_test)
     end
@@ -369,12 +371,13 @@ defmodule Chainex.MemoryTest do
     test "handles nil values" do
       memory = Memory.new(:buffer)
       updated = Memory.store(memory, :nil_key, nil)
-      
+
       assert {:ok, nil} = Memory.retrieve(updated, :nil_key)
     end
 
     test "handles complex nested data structures" do
       memory = Memory.new(:buffer)
+
       complex_data = %{
         users: [
           %{name: "Alice", preferences: %{theme: "dark", lang: "en"}},
@@ -398,9 +401,9 @@ defmodule Chainex.MemoryTest do
 
     test "large memory performance" do
       memory = Memory.new(:buffer)
-      
+
       # Store many items
-      large_memory = 
+      large_memory =
         1..1000
         |> Enum.reduce(memory, fn i, acc ->
           Memory.store(acc, :"key_#{i}", "value_#{i}")
@@ -408,7 +411,7 @@ defmodule Chainex.MemoryTest do
 
       assert Memory.size(large_memory) == 1000
       assert {:ok, "value_500"} = Memory.retrieve(large_memory, :key_500)
-      
+
       keys = Memory.keys(large_memory)
       assert length(keys) == 1000
       assert :key_1 in keys
@@ -417,7 +420,7 @@ defmodule Chainex.MemoryTest do
 
     test "conversation memory with many entries" do
       memory = Memory.new(:conversation)
-      
+
       # Add many conversation entries
       large_memory =
         1..100
@@ -427,7 +430,7 @@ defmodule Chainex.MemoryTest do
 
       assert Memory.size(large_memory) == 100
       assert {:ok, %{content: "Message 50"}} = Memory.retrieve(large_memory, :msg_50)
-      
+
       # Most recent should be first
       [first_entry | _] = large_memory.storage
       assert first_entry.value.content == "Message 100"

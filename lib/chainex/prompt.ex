@@ -77,7 +77,7 @@ defmodule Chainex.Prompt do
   @spec render(t(), map()) :: {:ok, String.t()} | {:error, term()}
   def render(%__MODULE__{} = prompt, variables \\ %{}) do
     all_variables = Map.merge(prompt.variables, ensure_map(variables))
-    
+
     case do_render(prompt.template, all_variables, prompt.options) do
       {:ok, result} -> {:ok, maybe_trim(result, prompt.options)}
       error -> error
@@ -125,12 +125,14 @@ defmodule Chainex.Prompt do
   @spec validate(t()) :: :ok | {:error, term()}
   def validate(%__MODULE__{template: template, options: options}) do
     case validate_template_syntax(template, options) do
-      :ok -> 
+      :ok ->
         case parse_template(template, options) do
           {:ok, tokens} -> validate_tokens(tokens)
           error -> error
         end
-      error -> error
+
+      error ->
+        error
     end
   end
 
@@ -167,7 +169,7 @@ defmodule Chainex.Prompt do
   @spec compile(String.t(), map()) :: (map() -> String.t())
   def compile(template, options \\ %{}) do
     prompt = new(template, %{}, options)
-    
+
     fn variables ->
       case render(prompt, variables) do
         {:ok, result} -> result
@@ -255,7 +257,7 @@ defmodule Chainex.Prompt do
   defp build_tokens(template, matches, regex) do
     # Use Regex.split with include_captures to get alternating text and variable parts
     parts = Regex.split(regex, template, include_captures: true)
-    
+
     # Process parts - odd indices are text, even indices are variables
     parts
     |> Enum.with_index()
@@ -269,7 +271,7 @@ defmodule Chainex.Prompt do
         {:variable, var_name}
       end
     end)
-    |> Enum.reject(fn 
+    |> Enum.reject(fn
       {:text, ""} -> true
       _ -> false
     end)
@@ -277,11 +279,13 @@ defmodule Chainex.Prompt do
 
   defp extract_variable_from_match(match_text, matches) do
     # Find the matching variable name from our captured groups
-    case Enum.find(matches, fn [var] -> 
-      String.contains?(match_text, var) 
-    end) do
-      [var_name] -> String.trim(var_name)
-      nil -> 
+    case Enum.find(matches, fn [var] ->
+           String.contains?(match_text, var)
+         end) do
+      [var_name] ->
+        String.trim(var_name)
+
+      nil ->
         # Extract content between braces as fallback
         match_text
         |> String.replace(~r/^\{\{?/, "")
@@ -296,7 +300,7 @@ defmodule Chainex.Prompt do
         tokens
         |> Enum.map(&render_token(&1, variables, options))
         |> Enum.join("")
-      
+
       {:ok, result}
     rescue
       e in ArgumentError -> {:error, {:missing_variable, e.message}}
@@ -308,8 +312,10 @@ defmodule Chainex.Prompt do
 
   defp render_token({:variable, var_name}, variables, options) do
     case get_nested_value(variables, var_name) do
-      {:ok, value} -> format_value(value, options)
-      {:error, _} -> 
+      {:ok, value} ->
+        format_value(value, options)
+
+      {:error, _} ->
         if options[:strict] do
           raise ArgumentError, var_name
         else
@@ -320,15 +326,17 @@ defmodule Chainex.Prompt do
 
   defp get_nested_value(variables, var_name) do
     keys = String.split(var_name, ".")
-    
+
     case get_in(variables, Enum.map(keys, &String.to_atom/1)) do
-      nil -> 
+      nil ->
         # Try string keys
         case get_in(variables, keys) do
           nil -> {:error, :not_found}
           value -> {:ok, value}
         end
-      value -> {:ok, value}
+
+      value ->
+        {:ok, value}
     end
   end
 
@@ -380,17 +388,21 @@ defmodule Chainex.Prompt do
   end
 
   defp validate_template_tags(template, regex) do
-    tags = Regex.scan(regex, template, return: :index)
-    |> List.flatten()
-    |> Enum.map(fn {pos, len} -> 
-      tag = String.slice(template, pos, len)
-      {tag, pos}
-    end)
+    tags =
+      Regex.scan(regex, template, return: :index)
+      |> List.flatten()
+      |> Enum.map(fn {pos, len} ->
+        tag = String.slice(template, pos, len)
+        {tag, pos}
+      end)
 
     case check_tag_balance(tags, 0, nil) do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       {:error, type, pos} when type == :unclosed ->
         {:error, {:invalid_syntax, "Unclosed template tag at position #{pos}"}}
+
       {:error, type, pos} when type == :unopened ->
         {:error, {:invalid_syntax, "Unopened template tag at position #{pos}"}}
     end
@@ -398,18 +410,18 @@ defmodule Chainex.Prompt do
 
   defp check_tag_balance([], 0, _), do: :ok
   defp check_tag_balance([], depth, pos) when depth > 0, do: {:error, :unclosed, pos}
-  
+
   defp check_tag_balance([{tag, pos} | rest], depth, last_open_pos) do
     cond do
       tag in ["{{", "{"] ->
         check_tag_balance(rest, depth + 1, pos)
-      
+
       tag in ["}}", "}"] and depth > 0 ->
         check_tag_balance(rest, depth - 1, last_open_pos)
-      
+
       tag in ["}}", "}"] and depth == 0 ->
         {:error, :unopened, pos}
-      
+
       true ->
         check_tag_balance(rest, depth, last_open_pos)
     end
@@ -426,22 +438,26 @@ defmodule Chainex.Prompt do
 
   defp invalid_token?({:text, _}), do: false
   defp invalid_token?({:variable, ""}), do: true
+
   defp invalid_token?({:variable, var_name}) when is_binary(var_name) do
     trimmed = String.trim(var_name)
     trimmed == "" or invalid_variable_name?(trimmed)
   end
+
   defp invalid_token?(_), do: true
 
   defp validate_variable_name(""), do: {:error, {:invalid_syntax, "Empty variable name"}}
+
   defp validate_variable_name(var_name) do
     trimmed = String.trim(var_name)
+
     cond do
       trimmed == "" ->
         {:error, {:invalid_syntax, "Empty variable name"}}
-      
+
       invalid_variable_name?(trimmed) ->
         {:error, {:invalid_syntax, "Invalid variable name '#{trimmed}'"}}
-      
+
       true ->
         :ok
     end
@@ -454,9 +470,9 @@ defmodule Chainex.Prompt do
     # - Contain only whitespace
     # - Contain invalid characters
     String.starts_with?(var_name, ".") or
-    String.ends_with?(var_name, ".") or
-    String.contains?(var_name, "..") or
-    String.trim(var_name) == "" or
-    not Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/, var_name)
+      String.ends_with?(var_name, ".") or
+      String.contains?(var_name, "..") or
+      String.trim(var_name) == "" or
+      not Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/, var_name)
   end
 end
