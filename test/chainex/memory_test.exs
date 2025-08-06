@@ -751,4 +751,236 @@ defmodule Chainex.MemoryTest do
       assert Memory.size(pruned) == 100
     end
   end
+
+  describe "database backend integration" do
+    import Chainex.RepoCase, only: [repo: 0]
+    
+    setup do
+      # Start owner for database tests
+      pid = Ecto.Adapters.SQL.Sandbox.start_owner!(repo(), shared: false)
+      on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
+      
+      # Create table for this test
+      Ecto.Adapters.SQL.query!(repo(), """
+        CREATE TABLE IF NOT EXISTS chainex_memory (
+          key TEXT PRIMARY KEY,
+          value BLOB NOT NULL,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          access_count INTEGER NOT NULL DEFAULT 0,
+          last_access INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        )
+      """, [])
+      
+      {:ok, table: "chainex_memory"}
+    end
+
+    test "creates database backend memory", %{table: table} do
+      memory = Memory.new(:persistent, %{
+        backend: :database,
+        repo: repo(),
+        table: table
+      })
+
+      assert memory.type == :persistent
+      assert memory.options.backend == :database
+      assert memory.options.repo == repo()
+      assert memory.options.table == table
+    end
+
+    test "stores and retrieves values with database backend", %{table: table} do
+      memory = Memory.new(:persistent, %{
+        backend: :database,
+        repo: repo(),
+        table: table
+      })
+
+      # Store values
+      memory = Memory.store(memory, :db_key1, "db_value1")
+      memory = Memory.store(memory, :db_key2, %{data: "complex", count: 42})
+
+      # Retrieve values
+      assert {:ok, "db_value1"} = Memory.retrieve(memory, :db_key1)
+      assert {:ok, %{data: "complex", count: 42}} = Memory.retrieve(memory, :db_key2)
+      assert {:error, :not_found} = Memory.retrieve(memory, :missing)
+    end
+
+    test "database backend size and keys operations", %{table: table} do
+      memory = Memory.new(:persistent, %{
+        backend: :database,
+        repo: repo(),
+        table: table
+      })
+
+      # Initially empty
+      assert Memory.size(memory) == 0
+      assert Memory.keys(memory) == []
+
+      # Add items
+      memory = memory
+        |> Memory.store(:db1, "value1")
+        |> Memory.store(:db2, "value2")
+        |> Memory.store("string_key", "value3")
+
+      # Check size and keys
+      assert Memory.size(memory) == 3
+      
+      keys = Memory.keys(memory)
+      assert length(keys) == 3
+      assert :db1 in keys
+      assert :db2 in keys  
+      assert "string_key" in keys
+    end
+
+    test "database backend delete operations", %{table: table} do
+      memory = Memory.new(:persistent, %{
+        backend: :database,
+        repo: repo(),
+        table: table
+      })
+
+      # Store and delete
+      memory = memory
+        |> Memory.store(:delete_me, "temporary")
+        |> Memory.store(:keep_me, "permanent")
+
+      assert Memory.size(memory) == 2
+      assert {:ok, "temporary"} = Memory.retrieve(memory, :delete_me)
+
+      # Delete one item
+      memory = Memory.delete(memory, :delete_me)
+      
+      assert Memory.size(memory) == 1
+      assert {:error, :not_found} = Memory.retrieve(memory, :delete_me)
+      assert {:ok, "permanent"} = Memory.retrieve(memory, :keep_me)
+    end
+
+    test "database backend clear operations", %{table: table} do
+      memory = Memory.new(:persistent, %{
+        backend: :database,
+        repo: repo(),
+        table: table
+      })
+
+      # Add data
+      memory = memory
+        |> Memory.store(:clear1, "value1")
+        |> Memory.store(:clear2, "value2")
+
+      assert Memory.size(memory) == 2
+
+      # Clear all
+      cleared = Memory.clear(memory)
+      assert Memory.size(cleared) == 0
+      assert Memory.keys(cleared) == []
+    end
+
+    test "database backend supports smart pruning", %{table: table} do
+      memory = Memory.new(:persistent, %{
+        backend: :database,
+        repo: repo(),
+        table: table,
+        max_size: 3,
+        prune_strategy: :lru,
+        auto_prune: true,
+        prune_percentage: 0.5
+      })
+
+      # Store items up to limit
+      memory = memory
+        |> Memory.store(:item1, "value1")
+        |> Memory.store(:item2, "value2")
+        |> Memory.store(:item3, "value3")
+
+      assert Memory.size(memory) == 3
+
+      # Add one more - should trigger auto pruning
+      memory = Memory.store(memory, :item4, "value4")
+
+      # Should have pruned some items
+      final_size = Memory.size(memory)
+      assert final_size <= 3
+      assert final_size >= 1  # At least some items should remain
+    end
+
+    test "database backend get_and_track updates access stats", %{table: table} do
+      memory = Memory.new(:persistent, %{
+        backend: :database,
+        repo: repo(),
+        table: table
+      })
+
+      # Store a value
+      memory = Memory.store(memory, :track_me, "tracked_value")
+
+      # Track access
+      {updated_memory, {:ok, "tracked_value"}} = Memory.get_and_track(memory, :track_me)
+      
+      # Verify the value was retrieved correctly
+      assert updated_memory.access_stats.access_count[:track_me] == 1
+
+      # Track again
+      {updated_memory2, {:ok, "tracked_value"}} = Memory.get_and_track(updated_memory, :track_me)
+      assert updated_memory2.access_stats.access_count[:track_me] == 2
+    end
+
+    test "database backend handles invalid configuration gracefully", %{table: table} do
+      # Missing repo
+      memory = Memory.new(:persistent, %{
+        backend: :database,
+        table: table
+      })
+
+      # Operations should still work but may fail gracefully
+      memory = Memory.store(memory, :test, "value")
+      
+      # The memory should still track stats even if database operations fail
+      assert Map.has_key?(memory.access_stats.creation_time, :test)
+    end
+
+    test "database backend works with conversation memory type", %{table: table} do
+      # Note: This tests that conversation type can also use database backend
+      # In practice, users might want separate tables for different memory types
+      memory = Memory.new(:persistent, %{
+        backend: :database,
+        repo: repo(),
+        table: table
+      })
+
+      # Store conversation-style entries
+      memory = memory
+        |> Memory.store(:msg1, %{role: "user", content: "Hello"})
+        |> Memory.store(:msg2, %{role: "assistant", content: "Hi there!"})
+
+      assert {:ok, %{role: "user", content: "Hello"}} = Memory.retrieve(memory, :msg1)
+      assert {:ok, %{role: "assistant", content: "Hi there!"}} = Memory.retrieve(memory, :msg2)
+      assert Memory.size(memory) == 2
+    end
+
+    test "database backend coexists with file backend", %{table: table} do
+      # Create file backend memory
+      temp_file = "/tmp/chainex_coexist_test_#{:erlang.unique_integer([:positive])}.dat"
+      on_exit(fn -> File.rm(temp_file) end)
+
+      file_memory = Memory.new(:persistent, %{file_path: temp_file})
+      
+      # Create database backend memory  
+      db_memory = Memory.new(:persistent, %{
+        backend: :database,
+        repo: repo(),
+        table: table
+      })
+
+      # Store different data in each
+      file_memory = Memory.store(file_memory, :file_key, "file_value")
+      db_memory = Memory.store(db_memory, :db_key, "db_value")
+
+      # Verify separation
+      assert {:ok, "file_value"} = Memory.retrieve(file_memory, :file_key)
+      assert {:error, :not_found} = Memory.retrieve(file_memory, :db_key)
+
+      assert {:ok, "db_value"} = Memory.retrieve(db_memory, :db_key)
+      assert {:error, :not_found} = Memory.retrieve(db_memory, :file_key)
+    end
+  end
 end

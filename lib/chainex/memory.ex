@@ -10,6 +10,7 @@ defmodule Chainex.Memory do
   defstruct [:type, :storage, :options, :pruning_config, :access_stats]
 
   @type memory_type :: :buffer | :persistent | :conversation | :vector
+  @type backend_type :: :file | :database
   @type storage :: map() | any()
   @type pruning_strategy :: :lru | :lfu | :ttl | :hybrid
   @type pruning_config :: %{
@@ -38,9 +39,28 @@ defmodule Chainex.Memory do
   ## Memory Types
 
   - `:buffer` - Simple in-memory key-value storage
-  - `:persistent` - File-based persistent storage  
+  - `:persistent` - Persistent storage (file or database)  
   - `:conversation` - Conversation history with message ordering
   - `:vector` - Vector-based semantic storage (future)
+
+  ## Persistent Storage Backends
+
+  The `:persistent` memory type supports multiple backends:
+
+  - **File backend** (default): Stores data in binary files
+  - **Database backend**: Stores data in SQL databases using Ecto
+
+  ### File Backend
+
+      Memory.new(:persistent, %{file_path: "/tmp/memory.dat"})
+
+  ### Database Backend
+
+      Memory.new(:persistent, %{
+        backend: :database,
+        repo: MyApp.Repo,
+        table: "chainex_memory"  # optional
+      })
 
   ## Examples
 
@@ -116,24 +136,43 @@ defmodule Chainex.Memory do
         key,
         value
       ) do
-    # Update in-memory storage first
-    new_storage = Map.put(storage, key, value)
-    updated_memory = %{memory | storage: new_storage}
+    case Map.get(options, :backend, :file) do
+      :database ->
+        # Database backend - store directly in database
+        case store_to_database(options, key, value) do
+          :ok ->
+            memory
+            |> update_creation_stats(key)
+            |> maybe_auto_prune()
 
-    # Persist to file
-    final_memory = case persist_to_file(new_storage, options) do
-      :ok ->
-        updated_memory
+          {:error, _reason} ->
+            # On database error, still track stats and try pruning
+            memory
+            |> update_creation_stats(key)
+            |> maybe_auto_prune()
+        end
 
-      {:error, _reason} ->
-        # On file write error, still return updated memory (data exists in memory)
-        # This allows the system to continue working even if persistence fails
-        updated_memory
+      :file ->
+        # File backend - original implementation
+        # Update in-memory storage first
+        new_storage = Map.put(storage, key, value)
+        updated_memory = %{memory | storage: new_storage}
+
+        # Persist to file
+        final_memory = case persist_to_file(new_storage, options) do
+          :ok ->
+            updated_memory
+
+          {:error, _reason} ->
+            # On file write error, still return updated memory (data exists in memory)
+            # This allows the system to continue working even if persistence fails
+            updated_memory
+        end
+        
+        final_memory
+        |> update_creation_stats(key)
+        |> maybe_auto_prune()
     end
-    
-    final_memory
-    |> update_creation_stats(key)
-    |> maybe_auto_prune()
   end
 
   def store(%__MODULE__{type: :vector} = memory, key, value) do
@@ -172,23 +211,31 @@ defmodule Chainex.Memory do
   end
 
   def retrieve(%__MODULE__{type: :persistent, storage: storage, options: options}, key) do
-    # First try in-memory storage for performance
-    case Map.get(storage, key) do
-      nil ->
-        # If not in memory, try to load from file and check again
-        case load_from_file(options) do
-          {:ok, file_storage} ->
-            case Map.get(file_storage, key) do
-              nil -> {:error, :not_found}
-              value -> {:ok, value}
+    case Map.get(options, :backend, :file) do
+      :database ->
+        # Database backend - retrieve directly from database
+        retrieve_from_database(options, key)
+
+      :file ->
+        # File backend - original implementation
+        # First try in-memory storage for performance
+        case Map.get(storage, key) do
+          nil ->
+            # If not in memory, try to load from file and check again
+            case load_from_file(options) do
+              {:ok, file_storage} ->
+                case Map.get(file_storage, key) do
+                  nil -> {:error, :not_found}
+                  value -> {:ok, value}
+                end
+
+              {:error, _reason} ->
+                {:error, :not_found}
             end
 
-          {:error, _reason} ->
-            {:error, :not_found}
+          value ->
+            {:ok, value}
         end
-
-      value ->
-        {:ok, value}
     end
   end
 
@@ -221,16 +268,27 @@ defmodule Chainex.Memory do
   end
 
   def keys(%__MODULE__{type: :persistent, storage: storage, options: options}) do
-    # Combine in-memory keys with file keys
-    memory_keys = Map.keys(storage)
+    case Map.get(options, :backend, :file) do
+      :database ->
+        # Database backend - get keys from database
+        case keys_from_database(options) do
+          {:ok, keys} -> keys
+          {:error, _reason} -> []
+        end
 
-    case load_from_file(options) do
-      {:ok, file_storage} ->
-        file_keys = Map.keys(file_storage)
-        (memory_keys ++ file_keys) |> Enum.uniq()
+      :file ->
+        # File backend - original implementation
+        # Combine in-memory keys with file keys
+        memory_keys = Map.keys(storage)
 
-      {:error, _reason} ->
-        memory_keys
+        case load_from_file(options) do
+          {:ok, file_storage} ->
+            file_keys = Map.keys(file_storage)
+            (memory_keys ++ file_keys) |> Enum.uniq()
+
+          {:error, _reason} ->
+            memory_keys
+        end
     end
   end
 
@@ -261,17 +319,28 @@ defmodule Chainex.Memory do
   end
 
   def size(%__MODULE__{type: :persistent, storage: storage, options: options}) do
-    # Count unique keys from both memory and file
-    memory_size = map_size(storage)
+    case Map.get(options, :backend, :file) do
+      :database ->
+        # Database backend - get size from database
+        case size_from_database(options) do
+          {:ok, size} -> size
+          {:error, _reason} -> 0
+        end
 
-    case load_from_file(options) do
-      {:ok, file_storage} ->
-        # Count unique keys across both storages
-        all_keys = Map.keys(storage) ++ Map.keys(file_storage)
-        length(Enum.uniq(all_keys))
+      :file ->
+        # File backend - original implementation
+        # Count unique keys from both memory and file
+        memory_size = map_size(storage)
 
-      {:error, _reason} ->
-        memory_size
+        case load_from_file(options) do
+          {:ok, file_storage} ->
+            # Count unique keys across both storages
+            all_keys = Map.keys(storage) ++ Map.keys(file_storage)
+            length(Enum.uniq(all_keys))
+
+          {:error, _reason} ->
+            memory_size
+        end
     end
   end
 
@@ -292,9 +361,43 @@ defmodule Chainex.Memory do
       0
   """
   @spec clear(t()) :: t()
-  def clear(%__MODULE__{type: type} = memory) do
-    new_storage = initialize_storage(type, memory.options)
-    %{memory | storage: new_storage}
+  def clear(%__MODULE__{type: type, storage: _storage, options: options} = memory) do
+    case {type, Map.get(options, :backend)} do
+      {:persistent, :database} ->
+        # For database backend, clear the actual database
+        case clear_database(options) do
+          :ok -> :ok
+          {:error, _reason} -> :ok  # Continue even if clear fails
+        end
+        
+        # Reset access stats and keep existing storage structure
+        %{memory | 
+          access_stats: %{
+            access_count: %{},
+            last_access: %{},
+            creation_time: %{}
+          }
+        }
+        
+      {:persistent, :file} ->
+        # For file backend, remove the file and reinitialize
+        if Map.has_key?(options, :path) do
+          File.rm(options.path)
+        end
+        new_storage = initialize_storage(type, options)
+        %{memory | storage: new_storage}
+        
+      _ ->
+        # For buffer, conversation, and vector types
+        new_storage = initialize_storage(type, options)
+        %{memory | storage: new_storage, 
+          access_stats: %{
+            access_count: %{},
+            last_access: %{},
+            creation_time: %{}
+          }
+        }
+    end
   end
 
   @doc """
@@ -321,22 +424,37 @@ defmodule Chainex.Memory do
   end
 
   def delete(%__MODULE__{type: :persistent, storage: storage, options: options} = memory, key) do
-    # Remove from in-memory storage
-    new_storage = Map.delete(storage, key)
-    updated_memory = %{memory | storage: new_storage}
+    case Map.get(options, :backend, :file) do
+      :database ->
+        # Database backend - delete from database
+        case delete_from_database(options, key) do
+          :ok ->
+            clean_access_stats(memory, key)
 
-    # Update persistent file
-    final_memory = case persist_to_file(new_storage, options) do
-      :ok ->
-        updated_memory
+          {:error, _reason} ->
+            # On database error, still clean stats
+            clean_access_stats(memory, key)
+        end
 
-      {:error, _reason} ->
-        # On file write error, still return updated memory (data deleted from memory)
-        # This allows the system to continue working even if persistence fails
-        updated_memory
+      :file ->
+        # File backend - original implementation
+        # Remove from in-memory storage
+        new_storage = Map.delete(storage, key)
+        updated_memory = %{memory | storage: new_storage}
+
+        # Update persistent file
+        final_memory = case persist_to_file(new_storage, options) do
+          :ok ->
+            updated_memory
+
+          {:error, _reason} ->
+            # On file write error, still return updated memory (data deleted from memory)
+            # This allows the system to continue working even if persistence fails
+            updated_memory
+        end
+        
+        clean_access_stats(final_memory, key)
     end
-    
-    clean_access_stats(final_memory, key)
   end
 
   def delete(%__MODULE__{type: :vector} = memory, key) do
@@ -433,10 +551,18 @@ defmodule Chainex.Memory do
   defp initialize_storage(:conversation, _options), do: []
 
   defp initialize_storage(:persistent, options) do
-    # Try to load existing data from file, fallback to empty map
-    case load_from_file(options) do
-      {:ok, storage} -> storage
-      {:error, _reason} -> %{}
+    case Map.get(options, :backend, :file) do
+      :database ->
+        # For database backend, storage is not used - operations go directly to DB
+        # We'll store an empty map but use the database for actual storage
+        %{}
+        
+      :file ->
+        # Try to load existing data from file, fallback to empty map
+        case load_from_file(options) do
+          {:ok, storage} -> storage
+          {:error, _reason} -> %{}
+        end
     end
   end
 
@@ -648,5 +774,77 @@ defmodule Chainex.Memory do
     }
     
     %{memory | access_stats: updated_stats}
+  end
+
+  # Database backend helper functions
+
+  defp store_to_database(options, key, value) do
+    case validate_database_config(options) do
+      {:ok, config} ->
+        Chainex.Memory.Database.store(config, key, value)
+      
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp retrieve_from_database(options, key) do
+    case validate_database_config(options) do
+      {:ok, config} ->
+        Chainex.Memory.Database.retrieve(config, key)
+      
+      {:error, _reason} ->
+        {:error, :not_found}
+    end
+  end
+
+  defp keys_from_database(options) do
+    case validate_database_config(options) do
+      {:ok, config} ->
+        Chainex.Memory.Database.keys(config)
+      
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp size_from_database(options) do
+    case validate_database_config(options) do
+      {:ok, config} ->
+        Chainex.Memory.Database.size(config)
+      
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp delete_from_database(options, key) do
+    case validate_database_config(options) do
+      {:ok, config} ->
+        Chainex.Memory.Database.delete(config, key)
+      
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp clear_database(options) do
+    case validate_database_config(options) do
+      {:ok, config} ->
+        Chainex.Memory.Database.clear(config)
+      
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp validate_database_config(options) do
+    case Map.get(options, :database) || options do
+      config when is_map(config) ->
+        Chainex.Memory.Database.validate_config(config)
+      
+      _ ->
+        {:error, :invalid_database_config}
+    end
   end
 end
