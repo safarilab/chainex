@@ -6,5 +6,5 @@ if Mix.env() == :test do
     database: Path.expand("../test_chainex.db", __DIR__),
     pool: Ecto.Adapters.SQL.Sandbox
 
-  # config :chainex, ecto_repos: [Chainex.RepoCase.TestRepo]
+  config :chainex, ecto_repos: [Chainex.RepoCase.TestRepo]
 end
