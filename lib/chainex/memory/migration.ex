@@ -69,8 +69,14 @@ defmodule Chainex.Memory.Migration do
       # Without indexes:
       create_memory_table("custom_memory", create_indexes: false)
   """
+  @spec create_memory_table() :: :ok
+  def create_memory_table, do: create_memory_table(@default_table, [])
+  
+  @spec create_memory_table(String.t()) :: :ok
+  def create_memory_table(table) when is_binary(table), do: create_memory_table(table, [])
+  
   @spec create_memory_table(String.t(), keyword()) :: :ok
-  def create_memory_table(table \\ @default_table, opts \\ []) do
+  def create_memory_table(table, opts) when is_binary(table) and is_list(opts) do
     create_indexes = Keyword.get(opts, :create_indexes, true)
 
     create table(table, primary_key: false) do
@@ -97,8 +103,11 @@ defmodule Chainex.Memory.Migration do
       drop_memory_table()
       drop_memory_table("my_memory")
   """
+  @spec drop_memory_table() :: :ok
+  def drop_memory_table, do: drop_memory_table(@default_table)
+  
   @spec drop_memory_table(String.t()) :: :ok
-  def drop_memory_table(table \\ @default_table) do
+  def drop_memory_table(table) when is_binary(table) do
     drop table(table)
     :ok
   end

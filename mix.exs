@@ -34,10 +34,15 @@ defmodule Chainex.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      # HTTP client for LLM API calls
+      {:req, "~> 0.4.0"},
+      # JSON handling
+      {:jason, "~> 1.4"},
       # Database support (optional - user provides their own repo and adapter)
       {:ecto_sql, "~> 3.0", optional: true},
       # Test dependencies
-      {:ecto_sqlite3, "~> 0.16", only: :test}
+      {:ecto_sqlite3, "~> 0.16", only: :test},
+      {:bypass, "~> 2.1", only: :test}
     ]
   end
 end
