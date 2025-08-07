@@ -133,36 +133,336 @@ end)
 |> Chain.run()
 ```
 
-### Smart Data Processing
+### Smart Data Processing with JSON Maps and Structs
 
-Extract and validate structured data:
+Extract and validate complex structured data with flexible output formats:
 
 ```elixir
-# Contact extraction pipeline
-contact_schema = %{
-  name: :string,
-  email: :string,
-  phone: :string,
-  company: :string
+# Define struct modules for type safety
+defmodule CompanyAnalysis do
+  defstruct [:company, :financials, :key_metrics, :analysis_timestamp]
+  
+  defmodule Company do
+    defstruct [:name, :industry, :founded, :headquarters]
+    
+    defmodule Headquarters do
+      defstruct [:city, :country, :coordinates]
+      
+      defmodule Coordinates do
+        defstruct [:lat, :lng]
+      end
+    end
+  end
+  
+  defmodule Financials do
+    defstruct [:revenue, :employees, :funding_rounds]
+    
+    defmodule Revenue do
+      defstruct [:amount, :currency, :period]
+    end
+    
+    defmodule FundingRound do
+      defstruct [:round, :amount, :date, :investors]
+    end
+  end
+  
+  defmodule KeyMetrics do
+    defstruct [:market_share, :growth_rate, :customer_satisfaction, :competitive_advantages]
+  end
+end
+
+# Use struct parsing for strong typing
+"{{company_info}}"
+|> Chain.new()
+|> Chain.prompt("Analyze the following company information: {{input}}")
+|> Chain.llm(:openai)
+|> Chain.parse(:struct, CompanyAnalysis)
+|> Chain.transform(fn analysis -> 
+  # Now working with strongly typed structs
+  %{analysis | analysis_timestamp: DateTime.utc_now()}
+end)
+|> Chain.run(%{company_info: "Tesla Inc. is an electric vehicle manufacturer..."})
+# Returns: {:ok, %CompanyAnalysis{company: %CompanyAnalysis.Company{...}}}
+
+# Alternative: Map schema for simpler validation
+company_analysis_schema = %{
+  company: %{
+    name: :string,
+    industry: :string,
+    founded: :integer,
+    headquarters: %{
+      city: :string,
+      country: :string,
+      coordinates: %{
+        lat: :float,
+        lng: :float
+      }
+    }
+  },
+  financials: %{
+    revenue: %{
+      amount: :float,
+      currency: :string,
+      period: :string
+    },
+    employees: :integer,
+    funding_rounds: [%{
+      round: :string,
+      amount: :float,
+      date: :string,
+      investors: [:string]
+    }]
+  },
+  key_metrics: %{
+    market_share: :float,
+    growth_rate: :float,
+    customer_satisfaction: :float,
+    competitive_advantages: [:string]
+  }
 }
 
-"{{unstructured_text}}"
+"{{company_info}}"
 |> Chain.new()
-|> Chain.prompt("Extract contact information from the following text: {{input}}")
+|> Chain.prompt("Analyze the following company information: {{input}}")
 |> Chain.llm(:openai)
-|> Chain.parse(:json)
-|> Chain.validate_schema(contact_schema)
-|> Chain.transform(fn contact -> 
-  # Normalize contact data - format phone number and clean email
+|> Chain.parse(:json, company_analysis_schema)
+|> Chain.transform(fn analysis -> 
+  # Working with validated map data
   %{
-    name: String.trim(contact["name"] || ""),
-    email: String.downcase(String.trim(contact["email"] || "")),
-    phone: normalize_phone_number(contact["phone"] || ""),
-    company: String.trim(contact["company"] || "")
+    company: normalize_company_data(analysis["company"]),
+    financials: calculate_financial_ratios(analysis["financials"]),
+    key_metrics: enrich_metrics(analysis["key_metrics"]),
+    analysis_timestamp: DateTime.utc_now()
   }
 end)
-|> Chain.run(%{unstructured_text: "John Smith from Acme Corp, john@acme.com, 555-123-4567"})
-# => {:ok, %{name: "John Smith", email: "john@acme.com", phone: "+15551234567", company: "Acme Corp"}}
+|> Chain.run(%{company_info: "Tesla Inc. is an electric vehicle manufacturer..."})
+# Returns: {:ok, %{"company" => %{"name" => "Tesla Inc", ...}}}
+
+# Product catalog with struct parsing
+defmodule ProductCatalog do
+  defstruct [:products, :metadata]
+  
+  defmodule Product do
+    defstruct [:id, :name, :category, :price, :specifications, :availability]
+    
+    defmodule Price do
+      defstruct [:amount, :currency, :discount]
+      
+      defmodule Discount do
+        defstruct [:percentage, :valid_until]
+      end
+    end
+    
+    defmodule Specifications do
+      defstruct [:dimensions, :weight, :features, :compatibility]
+      
+      defmodule Dimensions do
+        defstruct [:length, :width, :height, :unit]
+      end
+      
+      defmodule Weight do
+        defstruct [:value, :unit]
+      end
+      
+      defmodule Compatibility do
+        defstruct [:platform, :versions]
+      end
+    end
+    
+    defmodule Availability do
+      defstruct [:in_stock, :quantity, :warehouses]
+      
+      defmodule Warehouse do
+        defstruct [:location, :stock_level]
+      end
+    end
+  end
+  
+  defmodule Metadata do
+    defstruct [:total_products, :last_updated, :data_source]
+  end
+end
+
+"{{catalog_data}}"
+|> Chain.new()
+|> Chain.llm(:openai)
+|> Chain.parse(:struct, ProductCatalog)
+|> Chain.transform(fn catalog ->
+  # Process nested struct data with type safety
+  processed_products = catalog.products
+  |> Enum.map(fn product ->
+    %{product | 
+      name: String.trim(product.name),
+      price: normalize_price_struct(product.price),
+      specifications: flatten_spec_struct(product.specifications)
+    }
+  end)
+  
+  %{catalog | 
+    products: processed_products,
+    metadata: %{catalog.metadata | last_updated: DateTime.utc_now()}
+  }
+end)
+|> Chain.run(%{catalog_data: "Extensive product listing with specifications..."})
+
+# Alternative: Map-based product schema
+product_schema = %{
+  products: [%{
+    id: :string,
+    name: :string,
+    category: :string,
+    price: %{
+      amount: :float,
+      currency: :string,
+      discount: %{
+        percentage: :float,
+        valid_until: :string
+      }
+    },
+    specifications: %{
+      dimensions: %{
+        length: :float,
+        width: :float,
+        height: :float,
+        unit: :string
+      },
+      weight: %{
+        value: :float,
+        unit: :string
+      },
+      features: [:string],
+      compatibility: [%{
+        platform: :string,
+        versions: [:string]
+      }]
+    },
+    availability: %{
+      in_stock: :boolean,
+      quantity: :integer,
+      warehouses: [%{
+        location: :string,
+        stock_level: :integer
+      }]
+    }
+  }],
+  metadata: %{
+    total_products: :integer,
+    last_updated: :string,
+    data_source: :string
+  }
+}
+
+"{{catalog_data}}"
+|> Chain.new()
+|> Chain.llm(:openai)
+|> Chain.parse(:json, schema: product_schema)
+|> Chain.transform(fn catalog ->
+  # Process nested product data
+  processed_products = catalog["products"]
+  |> Enum.map(fn product ->
+    %{
+      id: product["id"],
+      name: String.trim(product["name"]),
+      normalized_price: normalize_pricing(product["price"]),
+      specs: flatten_specifications(product["specifications"]),
+      stock_info: calculate_total_stock(product["availability"])
+    }
+  end)
+  
+  %{
+    products: processed_products,
+    summary: generate_catalog_summary(processed_products),
+    processed_at: DateTime.utc_now()
+  }
+end)
+|> Chain.run(%{catalog_data: "Extensive product listing with specifications..."})
+
+# Nested user profile extraction
+user_profile_schema = %{
+  user: %{
+    personal: %{
+      name: %{
+        first: :string,
+        last: :string,
+        preferred: :string
+      },
+      contact: %{
+        email: :string,
+        phone: %{
+          primary: :string,
+          secondary: :string
+        },
+        address: %{
+          street: :string,
+          city: :string,
+          state: :string,
+          postal_code: :string,
+          country: :string
+        }
+      }
+    },
+    professional: %{
+      current_position: %{
+        title: :string,
+        company: :string,
+        department: :string,
+        start_date: :string
+      },
+      experience: [%{
+        title: :string,
+        company: :string,
+        duration: :string,
+        responsibilities: [:string]
+      }],
+      skills: [%{
+        name: :string,
+        proficiency: :string,
+        years_experience: :integer,
+        certifications: [:string]
+      }]
+    },
+    preferences: %{
+      communication: %{
+        preferred_method: :string,
+        timezone: :string,
+        availability: %{
+          days: [:string],
+          hours: %{
+            start: :string,
+            end: :string
+          }
+        }
+      },
+      interests: [:string],
+      goals: [%{
+        category: :string,
+        description: :string,
+        target_date: :string,
+        priority: :string
+      }]
+    }
+  }
+}
+
+"{{user_data}}"
+|> Chain.new()
+|> Chain.llm(:openai)
+|> Chain.parse(:json, schema: user_profile_schema)
+|> Chain.transform(fn profile ->
+  # Extract and structure nested user information
+  user = profile["user"]
+  
+  %{
+    id: generate_user_id(user["personal"]["name"]),
+    display_name: get_preferred_name(user["personal"]["name"]),
+    contact_score: calculate_contact_completeness(user["personal"]["contact"]),
+    career_level: assess_career_level(user["professional"]),
+    skill_matrix: build_skill_matrix(user["professional"]["skills"]),
+    engagement_profile: analyze_preferences(user["preferences"]),
+    data_quality: assess_profile_quality(user)
+  }
+end)
+|> Chain.run(%{user_data: "Complete user profile information including contact details..."})
 ```
 
 ### Intelligent Tool Usage
@@ -225,7 +525,7 @@ end)
   "Edit and improve this draft for clarity, flow, and engagement: #{draft}"
 end)
 |> Chain.llm(:openai, model: "gpt-4")
-|> Chain.parse(:structured, schema: %{title: :string, content: :string, tags: [:string]})
+|> Chain.parse(:json, schema: %{title: :string, content: :string, tags: [:string]})
 |> Chain.run(%{topic: "sustainable energy solutions"})
 ```
 
@@ -252,7 +552,7 @@ Automated code review pipeline:
   "Based on this code analysis, suggest specific improvements: #{analysis}"
 end)
 |> Chain.llm(:anthropic)
-|> Chain.parse(:structured, schema: %{
+|> Chain.parse(:json, schema: %{
   issues: [%{type: :string, severity: :string, description: :string}],
   suggestions: [:string],
   overall_score: :integer
@@ -314,7 +614,7 @@ summarizer = Chain.new(
   user: "Summarize this {{doc_type}}: {{content}}"
 )
 |> Chain.llm(:openai)
-|> Chain.parse(:structured, schema: %{
+|> Chain.parse(:json, schema: %{
   summary: :string,
   key_points: [:string],
   word_count: :integer

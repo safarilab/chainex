@@ -167,10 +167,10 @@ chain = Chain.new("Calculate expenses")
 chain |> Chain.run([100, 250, 75])  # Input becomes tool parameter
 ```
 
-### Level 7: Output Parsers
+### Level 7: Output Parsers with JSON Maps and Structs
 
 ```elixir
-# Parse LLM responses into structured data
+# Simple JSON parsing (returns map)
 chain = Chain.new(
   system: "You are a data extractor",
   user: "Extract info from: {{text}}"
@@ -181,31 +181,210 @@ chain = Chain.new(
 chain |> Chain.run(%{text: "John Doe, age 30, from NYC"})
 # Returns: {:ok, %{"name" => "John Doe", "age" => 30, "city" => "NYC"}}
 
-# Schema-based parsing
+# JSON parsing with map schema validation
 person_schema = %{
   name: :string,
   age: :integer,
-  skills: [:string],
-  active: :boolean
+  city: :string,
+  skills: [:string]
 }
 
 chain = Chain.new("Extract person info: {{text}}")
 |> Chain.llm(:openai)
-|> Chain.parse(:structured, schema: person_schema)
+|> Chain.parse(:json, person_schema)
 
-# Custom parsers
-date_parser = fn text ->
-  case Regex.run(~r/(\d{4})-(\d{2})-(\d{2})/, text) do
-    [_, year, month, day] -> 
-      {:ok, Date.new!(String.to_integer(year), String.to_integer(month), String.to_integer(day))}
-    nil -> 
-      {:error, :no_date_found}
+chain |> Chain.run(%{text: "John Doe, 30 years old, lives in NYC, knows Python and Elixir"})
+# Returns: {:ok, %{"name" => "John Doe", "age" => 30, "city" => "NYC", "skills" => ["Python", "Elixir"]}}
+
+# Struct-based parsing for type safety
+defmodule CompanyAnalysis do
+  defstruct [
+    :company,
+    :financials,
+    :metrics
+  ]
+  
+  defmodule Company do
+    defstruct [:name, :industry, :headquarters]
+    
+    defmodule Headquarters do
+      defstruct [:city, :country, :coordinates]
+      
+      defmodule Coordinates do
+        defstruct [:latitude, :longitude]
+      end
+    end
+  end
+  
+  defmodule Financials do
+    defstruct [:revenue, :employees, :funding_rounds]
+    
+    defmodule Revenue do
+      defstruct [:amount, :currency]
+    end
+    
+    defmodule FundingRound do
+      defstruct [:series, :amount, :investors]
+    end
+  end
+  
+  defmodule Metrics do
+    defstruct [:growth_rate, :market_share]
   end
 end
 
-chain = Chain.new("When was {{event}}?")
+# Parse directly into nested structs
+chain = Chain.new("Analyze company: {{company_info}}")
 |> Chain.llm(:openai)
-|> Chain.parse(date_parser)
+|> Chain.parse(:struct, CompanyAnalysis)
+
+chain |> Chain.run(%{company_info: "Tesla Inc. based in Austin, Texas..."})
+# Returns: {:ok, %CompanyAnalysis{company: %CompanyAnalysis.Company{...}, financials: %CompanyAnalysis.Financials{...}}}
+
+# Mixed approach - map schema with struct parsing
+company_map_schema = %{
+  company: %{
+    name: :string,
+    industry: :string,
+    headquarters: %{
+      city: :string,
+      country: :string,
+      coordinates: %{
+        latitude: :float,
+        longitude: :float
+      }
+    }
+  },
+  financials: %{
+    revenue: %{
+      amount: :float,
+      currency: :string
+    },
+    employees: :integer,
+    funding_rounds: [%{
+      series: :string,
+      amount: :float,
+      investors: [:string]
+    }]
+  },
+  metrics: %{
+    growth_rate: :float,
+    market_share: :float
+  }
+}
+
+# Parse with map schema but convert to struct
+chain = Chain.new("Analyze company: {{company_info}}")
+|> Chain.llm(:openai)
+|> Chain.parse(:json, company_map_schema)
+|> Chain.transform(fn data -> 
+  # Convert validated map to struct
+  struct(CompanyAnalysis, data)
+end)
+
+# Returns: {:ok, %CompanyAnalysis{...}} with validation
+
+# Array of objects with nested properties
+product_catalog_schema = %{
+  products: [%{
+    id: :string,
+    name: :string,
+    pricing: %{
+      base_price: %{
+        amount: :float,
+        currency: :string
+      },
+      discounts: [%{
+        type: :string,
+        percentage: :float,
+        conditions: [:string]
+      }]
+    },
+    specifications: %{
+      dimensions: %{
+        length: :float,
+        width: :float,
+        height: :float,
+        unit: :string
+      },
+      features: [%{
+        category: :string,
+        items: [:string]
+      }]
+    }
+  }],
+  catalog_info: %{
+    total_count: :integer,
+    last_updated: :string
+  }
+}
+
+chain = Chain.new("Extract product catalog: {{catalog_data}}")
+|> Chain.llm(:openai)
+|> Chain.parse(:json, schema: product_catalog_schema)
+
+# User profile with deeply nested preferences
+user_schema = %{
+  profile: %{
+    personal: %{
+      name: %{
+        first: :string,
+        last: :string
+      },
+      contact: %{
+        email: :string,
+        phones: [%{
+          type: :string,
+          number: :string,
+          verified: :boolean
+        }]
+      }
+    },
+    preferences: %{
+      notifications: %{
+        email: %{
+          marketing: :boolean,
+          updates: :boolean,
+          frequency: :string
+        },
+        push: %{
+          enabled: :boolean,
+          quiet_hours: %{
+            start: :string,
+            end: :string
+          }
+        }
+      },
+      privacy: %{
+        profile_visibility: :string,
+        data_sharing: [%{
+          partner: :string,
+          allowed: :boolean,
+          categories: [:string]
+        }]
+      }
+    }
+  }
+}
+
+chain = Chain.new("Extract user profile: {{user_data}}")
+|> Chain.llm(:openai)
+|> Chain.parse(:json, schema: user_schema)
+
+# Custom nested parsers
+financial_parser = fn text ->
+  # Extract complex financial data with validation
+  case Jason.decode(text) do
+    {:ok, data} -> 
+      validate_financial_structure(data)
+    {:error, _} -> 
+      {:error, :invalid_financial_json}
+  end
+end
+
+chain = Chain.new("Generate financial report: {{data}}")
+|> Chain.llm(:openai)
+|> Chain.parse(financial_parser)
 ```
 
 ### Level 8: Memory and Context
@@ -310,6 +489,8 @@ defmodule Chainex.Chain do
   
   @spec parse(t(), atom() | function(), keyword()) :: t()
   def parse(chain, parser_type, opts \\ [])
+  # opts can include: schema, on_error, strict, etc.
+  # When schema is provided, automatic validation is performed
   
   # Execution functions
   @spec run(t(), variables()) :: {:ok, any()} | {:error, any()}
