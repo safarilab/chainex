@@ -85,10 +85,12 @@ Chain operations with different prompts for different LLMs:
 |> Chain.prompt("As an expert analyst, extract key insights from: {{input}}")
 |> Chain.llm(:openai, model: "gpt-4")
 |> Chain.transform(fn insights -> 
+  # Take the insights from OpenAI and prepare them for critical review
   "Previous analysis: #{insights}. Now provide a critical review and identify potential biases or gaps."
 end)
 |> Chain.llm(:anthropic, model: "claude-3-opus") 
 |> Chain.transform(fn review ->
+  # Combine previous review with synthesis instructions for final LLM
   "Synthesis task: Combine the insights and critical review into a balanced report with actionable recommendations."
 end)
 |> Chain.llm(:ollama, model: "llama2")
@@ -123,7 +125,9 @@ ethical_view = expert_analysis.("medical ethicist") |> Chain.run(%{subject: subj
 [technical_view, business_view, ethical_view]
 |> Chain.new()
 |> Chain.transform(fn analyses -> 
-  "Synthesize these expert analyses: #{Enum.join(analyses, "\n\n")}"
+  # Combine all expert analyses into a single prompt for synthesis
+  combined_text = Enum.join(analyses, "\n\n")
+  "Synthesize these expert analyses: #{combined_text}"
 end)
 |> Chain.llm(:anthropic)
 |> Chain.run()
@@ -144,16 +148,19 @@ contact_schema = %{
 
 "{{unstructured_text}}"
 |> Chain.new()
-|> Chain.prompt("""
-  Extract contact information from the following text.
-  Return a JSON object with name, email, phone, and company fields.
-  
-  Text: {{input}}
-  """)
+|> Chain.prompt("Extract contact information from the following text: {{input}}")
 |> Chain.llm(:openai)
 |> Chain.parse(:json)
 |> Chain.validate_schema(contact_schema)
-|> Chain.transform(fn contact -> normalize_contact(contact) end)
+|> Chain.transform(fn contact -> 
+  # Normalize contact data - format phone number and clean email
+  %{
+    name: String.trim(contact["name"] || ""),
+    email: String.downcase(String.trim(contact["email"] || "")),
+    phone: normalize_phone_number(contact["phone"] || ""),
+    company: String.trim(contact["company"] || "")
+  }
+end)
 |> Chain.run(%{unstructured_text: "John Smith from Acme Corp, john@acme.com, 555-123-4567"})
 # => {:ok, %{name: "John Smith", email: "john@acme.com", phone: "+15551234567", company: "Acme Corp"}}
 ```
@@ -208,9 +215,15 @@ Multi-stage content creation:
 |> Chain.new()
 |> Chain.prompt("Research and outline key points about: {{input}}")
 |> Chain.llm(:openai, model: "gpt-4")
-|> Chain.transform(fn outline -> "Write a detailed blog post based on: #{outline}" end)
+|> Chain.transform(fn outline -> 
+  # Convert outline into detailed writing instructions
+  "Write a detailed blog post based on: #{outline}"
+end)
 |> Chain.llm(:anthropic, model: "claude-3-opus")
-|> Chain.transform(fn draft -> "Edit and improve this draft: #{draft}" end)
+|> Chain.transform(fn draft -> 
+  # Prepare draft for editing phase with specific improvement instructions
+  "Edit and improve this draft for clarity, flow, and engagement: #{draft}"
+end)
 |> Chain.llm(:openai, model: "gpt-4")
 |> Chain.parse(:structured, schema: %{title: :string, content: :string, tags: [:string]})
 |> Chain.run(%{topic: "sustainable energy solutions"})
@@ -234,7 +247,10 @@ Automated code review pipeline:
   Code: {{input}}
   """)
 |> Chain.llm(:openai, model: "gpt-4")
-|> Chain.transform(fn analysis -> "Suggest specific improvements: #{analysis}" end)
+|> Chain.transform(fn analysis -> 
+  # Take the analysis and prepare it for improvement suggestions
+  "Based on this code analysis, suggest specific improvements: #{analysis}"
+end)
 |> Chain.llm(:anthropic)
 |> Chain.parse(:structured, schema: %{
   issues: [%{type: :string, severity: :string, description: :string}],
@@ -260,7 +276,13 @@ customer_support = Chain.new(
 )
 |> Chain.llm(:anthropic)
 |> Chain.transform(fn response, vars -> 
-  translate_if_needed(response, vars.language)
+  # Translate response if target language is not English
+  if vars.language != "English" do
+    # Call translation service or LLM for translation
+    "Translate this response to #{vars.language}: #{response}"
+  else
+    response
+  end
 end)
 
 # Handle inquiries in different languages
@@ -346,7 +368,15 @@ Execute multiple LLM calls simultaneously:
   Chain.llm(:ollama, model: "llama2")
 ])
 |> Chain.combine(fn [result1, result2, result3] ->
-  aggregate_sentiment_scores([result1, result2, result3])
+  # Aggregate sentiment scores from multiple models
+  scores = [result1, result2, result3]
+  |> Enum.map(&extract_sentiment_score/1)
+  |> Enum.filter(&is_number/1)
+  
+  avg_score = Enum.sum(scores) / length(scores)
+  confidence = calculate_confidence(scores)
+  
+  %{sentiment_score: avg_score, confidence: confidence, individual_scores: scores}
 end)
 |> Chain.run(%{text_to_analyze: "Customer feedback text"})
 ```
