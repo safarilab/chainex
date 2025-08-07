@@ -342,8 +342,6 @@ defmodule Chainex.LLM.OpenAI do
 
   # Streaming implementation
   defp start_stream(url, headers, body, config) do
-    timeout = Keyword.get(config, :timeout, @default_timeout)
-    
     # This is a simplified streaming implementation
     # In production, you'd want to use a proper HTTP streaming client
     case http_request(:post, url, headers, body, config) do

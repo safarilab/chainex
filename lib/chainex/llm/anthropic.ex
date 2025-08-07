@@ -198,9 +198,9 @@ defmodule Chainex.LLM.Anthropic do
         system -> Map.put(base_body, "system", system)
       end
     
-    # Add optional parameters
+    # Add optional parameters with defaults
     base_body
-    |> maybe_add(:temperature, config)
+    |> Map.put("temperature", Keyword.get(config, :temperature, @default_temperature))
     |> maybe_add(:top_p, config)
     |> maybe_add(:top_k, config)
     |> maybe_add(:stop_sequences, config)
@@ -326,8 +326,6 @@ defmodule Chainex.LLM.Anthropic do
 
   # Streaming implementation
   defp start_stream(url, headers, body, config) do
-    timeout = Keyword.get(config, :timeout, @default_timeout)
-    
     # Simplified streaming implementation
     # In production, you'd want to use Server-Sent Events processing
     case http_request(:post, url, headers, body, config) do
