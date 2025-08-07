@@ -42,7 +42,9 @@ defmodule Chainex.MixProject do
       {:ecto_sql, "~> 3.0", optional: true},
       # Test dependencies
       {:ecto_sqlite3, "~> 0.16", only: :test},
-      {:bypass, "~> 2.1", only: :test}
+      {:bypass, "~> 2.1", only: :test},
+      # Development dependencies
+      {:dialyxir, "~> 1.3", only: [:dev], runtime: false}
     ]
   end
 end

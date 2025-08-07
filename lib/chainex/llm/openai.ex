@@ -265,7 +265,7 @@ defmodule Chainex.LLM.OpenAI do
       retry: false
     ]
     
-    json_body = if body, do: Jason.encode!(body), else: nil
+    json_body = Jason.encode!(body)
     
     try do
       case Req.request([method: method, url: url, headers: headers, body: json_body] ++ request_opts) do
