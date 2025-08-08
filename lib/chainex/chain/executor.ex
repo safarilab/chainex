@@ -68,9 +68,42 @@ defmodule Chainex.Chain.Executor do
     # Merge input into variables for template resolution
     merged_vars = Map.put(variables, :input, input)
     
-    case VariableResolver.resolve(template, merged_vars) do
-      {:ok, resolved} -> {:ok, resolved}
-      error -> error
+    case template do
+      %Chainex.Prompt{} = prompt ->
+        # Handle Prompt struct - validate first
+        case Chainex.Prompt.validate(prompt) do
+          :ok ->
+            case Chainex.Prompt.render(prompt, merged_vars) do
+              {:ok, resolved} -> {:ok, resolved}
+              error -> error
+            end
+          error -> error
+        end
+        
+      template_string when is_binary(template_string) ->
+        # Handle string template
+        case VariableResolver.resolve(template_string, merged_vars) do
+          {:ok, resolved} -> {:ok, resolved}
+          error -> error
+        end
+        
+      template_function when is_function(template_function) ->
+        # Handle function template
+        try do
+          case :erlang.fun_info(template_function, :arity) do
+            {:arity, 1} -> 
+              {:ok, template_function.(input)}
+            {:arity, 2} -> 
+              {:ok, template_function.(input, variables)}
+            _ -> 
+              {:error, "Prompt function must have arity 1 or 2"}
+          end
+        rescue
+          e -> {:error, Exception.message(e)}
+        end
+        
+      _ ->
+        {:error, "Invalid prompt template type"}
     end
   end
   
