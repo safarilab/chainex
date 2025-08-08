@@ -417,6 +417,65 @@ analysis_chain = Chain.new(
 ### Level 9: Advanced Tool Usage (LLM-Driven)
 
 ```elixir
+# Define tools first - weather tool
+weather_tool = Tool.new(
+  name: "get_weather",
+  description: "Get current weather for a location",
+  parameters: %{
+    location: %{type: "string", description: "City name or coordinates", required: true},
+    units: %{type: "string", enum: ["celsius", "fahrenheit"], default: "celsius"}
+  },
+  function: fn params ->
+    case WeatherAPI.get_current(params.location, params.units) do
+      {:ok, weather} -> 
+        "Temperature: #{weather.temp}°#{String.upcase(params.units)}, Conditions: #{weather.description}"
+      {:error, reason} -> 
+        "Weather unavailable: #{reason}"
+    end
+  end
+)
+
+# Calculator tool
+calculator_tool = Tool.new(
+  name: "calculate",
+  description: "Perform mathematical calculations",
+  parameters: %{
+    expression: %{type: "string", description: "Mathematical expression to evaluate", required: true},
+    precision: %{type: "integer", default: 2, description: "Decimal places for result"}
+  },
+  function: fn params ->
+    try do
+      result = Code.eval_string(params.expression) |> elem(0)
+      Float.round(result, params.precision)
+    rescue
+      _ -> "Invalid mathematical expression"
+    end
+  end
+)
+
+# Calendar tool
+calendar_tool = Tool.new(
+  name: "check_calendar",
+  description: "Check calendar events for a specific date",
+  parameters: %{
+    date: %{type: "string", description: "Date in YYYY-MM-DD format", required: true},
+    user_id: %{type: "string", description: "User identifier", required: true}
+  },
+  function: fn params ->
+    case CalendarAPI.get_events(params.user_id, params.date) do
+      {:ok, events} when events == [] ->
+        "No events scheduled for #{params.date}"
+      {:ok, events} ->
+        event_list = events
+        |> Enum.map(fn event -> "- #{event.title} at #{event.time}" end)
+        |> Enum.join("\n")
+        "Events for #{params.date}:\n#{event_list}"
+      {:error, reason} ->
+        "Calendar unavailable: #{reason}"
+    end
+  end
+)
+
 # LLM decides which tools to call
 chain = Chain.new(
   system: "You have access to tools: {{available_tools}}. Use them when needed.",
@@ -431,18 +490,621 @@ chain |> Chain.run(%{
 })
 
 # Filtered tools based on context
-chain = Chain.new(
+planning_chain = Chain.new(
   system: "Help with {{task_type}}",
   user: "{{request}}"
 )
-|> Chain.with_tools([weather_tool, math_tool, calendar_tool])
-|> Chain.llm(:openai, tools: "{{available_tools}}")
+|> Chain.with_tools([weather_tool, calendar_tool])
+|> Chain.llm(:openai, tools: :auto)
 
-chain |> Chain.run(%{
+planning_chain |> Chain.run(%{
   task_type: "planning my day",
-  available_tools: ["weather", "calendar"],
   request: "Help me plan tomorrow"
 })
+```
+
+### Tool Structure Definition
+
+```elixir
+defmodule Chainex.Tool do
+  @moduledoc """
+  Represents a tool that can be called by LLMs during chain execution.
+  Tools encapsulate external functionality and API integrations.
+  """
+  
+  defstruct [
+    :name,
+    :description,
+    :parameters,
+    :function,
+    :timeout,
+    :retries,
+    :metadata
+  ]
+  
+  @type parameter_spec :: %{
+    type: String.t(),
+    description: String.t(),
+    required: boolean(),
+    enum: [String.t()] | nil,
+    default: any(),
+    format: String.t() | nil,
+    minimum: number() | nil,
+    maximum: number() | nil,
+    properties: %{String.t() => parameter_spec()} | nil
+  }
+  
+  @type t :: %__MODULE__{
+    name: String.t(),
+    description: String.t(),
+    parameters: %{String.t() => parameter_spec()},
+    function: function(),
+    timeout: integer(),
+    retries: integer(),
+    metadata: map()
+  }
+  
+  @spec new(keyword()) :: t()
+  def new(opts) do
+    %__MODULE__{
+      name: Keyword.fetch!(opts, :name),
+      description: Keyword.fetch!(opts, :description),
+      parameters: Keyword.get(opts, :parameters, %{}),
+      function: Keyword.fetch!(opts, :function),
+      timeout: Keyword.get(opts, :timeout, 30_000),
+      retries: Keyword.get(opts, :retries, 3),
+      metadata: Keyword.get(opts, :metadata, %{})
+    }
+  end
+  
+  @spec call(t(), map()) :: {:ok, any()} | {:error, any()}
+  def call(%__MODULE__{} = tool, params) do
+    with {:ok, validated_params} <- validate_parameters(tool.parameters, params),
+         {:ok, result} <- execute_with_timeout(tool.function, validated_params, tool.timeout) do
+      {:ok, result}
+    end
+  end
+  
+  # Complex tool examples
+  
+  # Database query tool
+  database_tool = Tool.new(
+    name: "query_database",
+    description: "Execute database queries with safety checks",
+    parameters: %{
+      "query" => %{
+        type: "string",
+        description: "SQL query to execute",
+        required: true
+      },
+      "max_rows" => %{
+        type: "integer", 
+        description: "Maximum rows to return",
+        default: 100,
+        maximum: 1000
+      },
+      "timeout" => %{
+        type: "integer",
+        description: "Query timeout in milliseconds", 
+        default: 30000
+      }
+    },
+    function: fn params ->
+      case DatabaseAPI.execute_safe(params["query"], params["max_rows"], params["timeout"]) do
+        {:ok, results} -> format_query_results(results)
+        {:error, reason} -> "Query failed: #{reason}"
+      end
+    end,
+    timeout: 45_000,
+    retries: 1
+  )
+  
+  # File system tool
+  file_tool = Tool.new(
+    name: "read_file",
+    description: "Read contents of a file safely",
+    parameters: %{
+      "path" => %{
+        type: "string",
+        description: "File path to read",
+        required: true
+      },
+      "encoding" => %{
+        type: "string",
+        description: "File encoding",
+        enum: ["utf8", "latin1", "ascii"],
+        default: "utf8"
+      },
+      "max_size" => %{
+        type: "integer",
+        description: "Maximum file size in bytes",
+        default: 1_048_576,  # 1MB
+        maximum: 10_485_760  # 10MB
+      }
+    },
+    function: fn params ->
+      case FileAPI.read_safe(params["path"], params["encoding"], params["max_size"]) do
+        {:ok, content} -> content
+        {:error, :file_too_large} -> "File exceeds maximum size limit"
+        {:error, :not_found} -> "File not found: #{params["path"]}"
+        {:error, reason} -> "File read error: #{reason}"
+      end
+    end
+  )
+  
+  # HTTP request tool
+  http_tool = Tool.new(
+    name: "http_request",
+    description: "Make HTTP requests to external APIs",
+    parameters: %{
+      "url" => %{
+        type: "string",
+        description: "URL to request",
+        required: true,
+        format: "uri"
+      },
+      "method" => %{
+        type: "string",
+        description: "HTTP method",
+        enum: ["GET", "POST", "PUT", "DELETE"],
+        default: "GET"
+      },
+      "headers" => %{
+        type: "object",
+        description: "Request headers",
+        properties: %{},
+        default: %{}
+      },
+      "body" => %{
+        type: "string",
+        description: "Request body"
+      },
+      "timeout" => %{
+        type: "integer",
+        description: "Request timeout in milliseconds",
+        default: 10000,
+        maximum: 30000
+      }
+    },
+    function: fn params ->
+      case HTTPClient.request(params["method"], params["url"], params["body"], params["headers"], params["timeout"]) do
+        {:ok, %{status: status, body: body}} when status in 200..299 ->
+          body
+        {:ok, %{status: status}} ->
+          "HTTP request failed with status: #{status}"
+        {:error, reason} ->
+          "HTTP request error: #{reason}"
+      end
+    end
+  )
+end
+```
+
+### Advanced Tool Usage Patterns
+
+```elixir
+# 1. Tool Chaining - Output of one tool feeds into another
+search_tool = Tool.new(
+  name: "search_web",
+  description: "Search the web for information",
+  parameters: %{
+    "query" => %{type: "string", required: true},
+    "max_results" => %{type: "integer", default: 5}
+  },
+  function: fn params ->
+    SearchAPI.search(params["query"], params["max_results"])
+  end
+)
+
+summarize_tool = Tool.new(
+  name: "summarize_text",
+  description: "Summarize long text content",
+  parameters: %{
+    "text" => %{type: "string", required: true},
+    "max_words" => %{type: "integer", default: 100}
+  },
+  function: fn params ->
+    TextAPI.summarize(params["text"], params["max_words"])
+  end
+)
+
+# Chain that searches then summarizes
+research_chain = Chain.new(
+  system: "You are a research assistant. Use search to find information, then summarize key findings.",
+  user: "Research: {{topic}}"
+)
+|> Chain.with_tools([search_tool, summarize_tool])
+|> Chain.llm(:openai, tools: :auto)
+
+research_chain |> Chain.run(%{topic: "quantum computing breakthroughs 2024"})
+# LLM will: 1) Call search_tool, 2) Call summarize_tool with search results
+
+# 2. Conditional Tool Usage - Tools only available in certain contexts
+admin_tools = [
+  Tool.new(
+    name: "delete_user",
+    description: "Delete a user account (admin only)",
+    parameters: %{"user_id" => %{type: "string", required: true}},
+    function: fn params ->
+      if authorized?(:admin) do
+        UserAPI.delete(params["user_id"])
+      else
+        {:error, "Unauthorized: Admin access required"}
+      end
+    end
+  ),
+  Tool.new(
+    name: "modify_permissions",
+    description: "Modify user permissions (admin only)",
+    parameters: %{
+      "user_id" => %{type: "string", required: true},
+      "permissions" => %{type: "array", items: %{type: "string"}}
+    },
+    function: fn params ->
+      if authorized?(:admin) do
+        PermissionAPI.update(params["user_id"], params["permissions"])
+      else
+        {:error, "Unauthorized: Admin access required"}
+      end
+    end
+  )
+]
+
+# Dynamically select tools based on user role
+def create_chain_for_user(user) do
+  tools = case user.role do
+    :admin -> admin_tools ++ basic_tools
+    :moderator -> moderation_tools ++ basic_tools
+    _ -> basic_tools
+  end
+  
+  Chain.new(
+    system: "You are a helpful assistant with role: {{role}}",
+    user: "{{request}}"
+  )
+  |> Chain.with_tools(tools)
+  |> Chain.llm(:openai, tools: :auto)
+end
+
+# 3. Tool with Complex Return Types
+data_analysis_tool = Tool.new(
+  name: "analyze_dataset",
+  description: "Perform statistical analysis on dataset",
+  parameters: %{
+    "data_source" => %{type: "string", required: true},
+    "analysis_type" => %{
+      type: "string", 
+      enum: ["descriptive", "correlation", "regression", "clustering"],
+      required: true
+    },
+    "options" => %{
+      type: "object",
+      properties: %{
+        "confidence_level" => %{type: "number", default: 0.95},
+        "include_visualizations" => %{type: "boolean", default: false}
+      }
+    }
+  },
+  function: fn params ->
+    result = DataAnalyzer.analyze(
+      params["data_source"],
+      params["analysis_type"],
+      params["options"]
+    )
+    
+    # Return structured data that LLM can interpret
+    %{
+      summary: result.summary,
+      statistics: result.stats,
+      insights: result.insights,
+      visualization_urls: result.charts,
+      confidence: result.confidence_score
+    }
+  end
+)
+
+# 4. Streaming Tool Results
+streaming_tool = Tool.new(
+  name: "generate_report",
+  description: "Generate a detailed report (streams results)",
+  parameters: %{
+    "topic" => %{type: "string", required: true},
+    "sections" => %{type: "array", items: %{type: "string"}}
+  },
+  function: fn params ->
+    # Return a stream for long-running operations
+    Stream.resource(
+      fn -> ReportGenerator.start(params["topic"], params["sections"]) end,
+      fn state ->
+        case ReportGenerator.next_chunk(state) do
+          {:ok, chunk, new_state} -> {[chunk], new_state}
+          :done -> {:halt, state}
+        end
+      end,
+      fn state -> ReportGenerator.cleanup(state) end
+    )
+  end
+)
+
+# 5. Tool with Side Effects and Confirmation
+email_tool = Tool.new(
+  name: "send_email",
+  description: "Send an email (requires confirmation)",
+  parameters: %{
+    "to" => %{type: "array", items: %{type: "string"}, required: true},
+    "subject" => %{type: "string", required: true},
+    "body" => %{type: "string", required: true},
+    "cc" => %{type: "array", items: %{type: "string"}, default: []},
+    "attachments" => %{type: "array", items: %{type: "string"}, default: []}
+  },
+  function: fn params ->
+    # Generate preview first
+    preview = EmailAPI.preview(params)
+    
+    # In production, this might trigger a confirmation UI
+    case confirm_action?("send_email", preview) do
+      true -> 
+        case EmailAPI.send(params) do
+          {:ok, message_id} -> "Email sent successfully. Message ID: #{message_id}"
+          {:error, reason} -> "Failed to send email: #{reason}"
+        end
+      false ->
+        "Email cancelled by user"
+    end
+  end,
+  metadata: %{
+    requires_confirmation: true,
+    side_effects: [:external_communication]
+  }
+)
+
+# 6. Tool Execution Strategies
+chain = Chain.new(
+  system: "You are an AI assistant with access to various tools",
+  user: "{{request}}"
+)
+|> Chain.with_tools(all_tools)
+|> Chain.llm(:openai, 
+  tools: :auto,           # Let LLM decide when to use tools
+  tool_choice: "auto",    # Can be "auto", "none", or specific tool name
+  parallel_tool_calls: true  # Allow multiple tools in parallel
+)
+
+# Force specific tool usage
+chain_with_forced_tool = Chain.new("Analyze this data")
+|> Chain.with_tools([data_analysis_tool])
+|> Chain.llm(:openai, 
+  tool_choice: %{type: "function", function: %{name: "analyze_dataset"}}
+)
+
+# 7. Tool Result Processing
+chain_with_processing = Chain.new("Get weather and format nicely")
+|> Chain.with_tools([weather_tool])
+|> Chain.llm(:openai, tools: :auto)
+|> Chain.transform(fn result ->
+  # Post-process tool results
+  case result do
+    %{tool_calls: tool_results} ->
+      formatted = tool_results
+      |> Enum.map(&format_tool_result/1)
+      |> Enum.join("\n\n")
+      
+      "Here's what I found:\n#{formatted}"
+    _ -> result
+  end
+end)
+
+# 8. Tool with State Management
+stateful_conversation_tool = Tool.new(
+  name: "manage_conversation",
+  description: "Manage conversation state and history",
+  parameters: %{
+    "action" => %{
+      type: "string",
+      enum: ["save", "retrieve", "clear", "summarize"],
+      required: true
+    },
+    "session_id" => %{type: "string", required: true},
+    "data" => %{type: "object"}
+  },
+  function: fn params ->
+    case params["action"] do
+      "save" ->
+        ConversationStore.save(params["session_id"], params["data"])
+        "Conversation saved"
+      
+      "retrieve" ->
+        case ConversationStore.get(params["session_id"]) do
+          {:ok, history} -> Jason.encode!(history)
+          {:error, :not_found} -> "No conversation history found"
+        end
+      
+      "clear" ->
+        ConversationStore.delete(params["session_id"])
+        "Conversation history cleared"
+      
+      "summarize" ->
+        case ConversationStore.get(params["session_id"]) do
+          {:ok, history} ->
+            summary = ConversationSummarizer.summarize(history)
+            "Summary: #{summary}"
+          {:error, :not_found} ->
+            "No conversation to summarize"
+        end
+    end
+  end
+)
+
+# 9. Tool Middleware and Interceptors
+defmodule ToolMiddleware do
+  def rate_limit(tool, params) do
+    case RateLimiter.check(tool.name, params) do
+      :ok -> {:ok, params}
+      {:error, :rate_limited} -> {:error, "Rate limit exceeded. Try again later."}
+    end
+  end
+  
+  def log_usage(tool, params, result) do
+    Logger.info("Tool called", 
+      tool: tool.name,
+      params: params,
+      result: result,
+      timestamp: DateTime.utc_now()
+    )
+    result
+  end
+  
+  def validate_permissions(tool, params, user) do
+    if PermissionChecker.can_use?(user, tool) do
+      {:ok, params}
+    else
+      {:error, "Permission denied for tool: #{tool.name}"}
+    end
+  end
+end
+
+# Apply middleware to tools
+protected_tool = Tool.new(
+  name: "sensitive_operation",
+  description: "Perform sensitive operation",
+  parameters: %{"data" => %{type: "string", required: true}},
+  function: fn params ->
+    # Middleware will be applied before this executes
+    SensitiveAPI.process(params["data"])
+  end,
+  middleware: [
+    &ToolMiddleware.rate_limit/2,
+    &ToolMiddleware.validate_permissions/3,
+    &ToolMiddleware.log_usage/3
+  ]
+)
+
+# 10. Tool Composition and Workflows
+defmodule WorkflowTools do
+  def create_workflow_tool(steps) do
+    Tool.new(
+      name: "execute_workflow",
+      description: "Execute a multi-step workflow",
+      parameters: %{
+        "input" => %{type: "object", required: true},
+        "options" => %{type: "object", default: %{}}
+      },
+      function: fn params ->
+        initial_state = %{
+          input: params["input"],
+          options: params["options"],
+          results: []
+        }
+        
+        Enum.reduce(steps, initial_state, fn step, state ->
+          result = execute_step(step, state)
+          %{state | results: state.results ++ [result]}
+        end)
+      end
+    )
+  end
+  
+  # Example workflow tool
+  data_pipeline_tool = create_workflow_tool([
+    {:fetch, &DataFetcher.fetch/1},
+    {:validate, &DataValidator.validate/1},
+    {:transform, &DataTransformer.transform/1},
+    {:analyze, &DataAnalyzer.analyze/1},
+    {:report, &ReportGenerator.generate/1}
+  ])
+end
+```
+
+### Tool Function Calling Format (OpenAI-style)
+
+```elixir
+# How the LLM sees and calls tools
+defmodule ToolCallingFormat do
+  # LLM generates this structure when calling a tool
+  @tool_call_format %{
+    "id" => "call_abc123",
+    "type" => "function",
+    "function" => %{
+      "name" => "get_weather",
+      "arguments" => ~s({"location": "San Francisco", "units": "fahrenheit"})
+    }
+  }
+  
+  # Chain processes tool calls
+  def process_llm_response(llm_response) do
+    case llm_response do
+      %{"tool_calls" => tool_calls} ->
+        # Execute each tool call
+        results = Enum.map(tool_calls, fn call ->
+          tool_name = call["function"]["name"]
+          args = Jason.decode!(call["function"]["arguments"])
+          
+          tool = find_tool(tool_name)
+          {:ok, result} = Tool.call(tool, args)
+          
+          %{
+            "tool_call_id" => call["id"],
+            "role" => "tool",
+            "name" => tool_name,
+            "content" => result
+          }
+        end)
+        
+        # Send results back to LLM for final response
+        {:continue, results}
+        
+      %{"content" => content} ->
+        # Regular response without tool calls
+        {:done, content}
+    end
+  end
+end
+
+# Complete tool interaction flow
+defmodule ToolInteractionFlow do
+  def run_with_tools(chain, variables) do
+    # 1. Initial prompt with tool descriptions
+    messages = [
+      %{role: "system", content: build_system_prompt(chain)},
+      %{role: "user", content: resolve_variables(chain.user_prompt, variables)}
+    ]
+    
+    # 2. Include tool definitions in API call
+    tool_definitions = Enum.map(chain.tools, &format_tool_for_llm/1)
+    
+    # 3. LLM response might include tool calls
+    case LLM.complete(messages, tools: tool_definitions) do
+      %{tool_calls: calls} when calls != [] ->
+        # 4. Execute tools
+        tool_results = execute_tool_calls(calls, chain.tools)
+        
+        # 5. Add tool results to messages
+        updated_messages = messages ++ tool_results
+        
+        # 6. Get final response from LLM
+        LLM.complete(updated_messages, tools: tool_definitions)
+        
+      response ->
+        # No tool calls needed
+        response
+    end
+  end
+  
+  defp format_tool_for_llm(tool) do
+    %{
+      "type" => "function",
+      "function" => %{
+        "name" => tool.name,
+        "description" => tool.description,
+        "parameters" => %{
+          "type" => "object",
+          "properties" => tool.parameters,
+          "required" => get_required_params(tool.parameters)
+        }
+      }
+    }
+  end
+end
 ```
 
 ## Implementation Structure

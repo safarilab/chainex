@@ -470,6 +470,38 @@ end)
 Let LLMs decide when and how to use tools:
 
 ```elixir
+# Define tools first
+weather_tool = Tool.new(
+  name: "get_weather",
+  description: "Get current weather information for any location",
+  parameters: %{
+    location: %{type: "string", description: "City name or coordinates", required: true},
+    units: %{type: "string", enum: ["celsius", "fahrenheit"], default: "celsius"}
+  },
+  function: fn params ->
+    case WeatherAPI.get_current(params.location, params.units) do
+      {:ok, weather} -> 
+        "#{params.location}: #{weather.temp}°#{String.upcase(params.units)}, #{weather.description}"
+      {:error, reason} -> 
+        "Weather data unavailable: #{reason}"
+    end
+  end
+)
+
+calculator_tool = Tool.new(
+  name: "calculate",
+  description: "Perform mathematical calculations and unit conversions",
+  parameters: %{
+    expression: %{type: "string", description: "Math expression or conversion", required: true}
+  },
+  function: fn params ->
+    case MathParser.evaluate(params.expression) do
+      {:ok, result} -> "#{params.expression} = #{result}"
+      {:error, reason} -> "Calculation error: #{reason}"
+    end
+  end
+)
+
 # Weather assistant with tools
 Chain.new(
   system: "You can check weather and perform calculations. Use tools when needed.",
@@ -793,9 +825,208 @@ end
 # => {:ok, ["john@example.com", "mary@company.org"]}
 ```
 
-### Custom Tools
+### Advanced Tool Patterns
 
-Integrate with external APIs:
+Complex tool usage scenarios:
+
+```elixir
+# Tool chaining - research assistant
+research_assistant = Chain.new(
+  system: """
+  You are a research assistant. When asked to research a topic:
+  1. Search for information
+  2. Analyze the results
+  3. Generate a summary report
+  Use tools in sequence to complete the research.
+  """,
+  user: "{{research_request}}"
+)
+|> Chain.with_tools([
+  search_tool,      # Searches web/database
+  analyze_tool,     # Analyzes found content
+  summarize_tool,   # Creates summary
+  citation_tool     # Formats citations
+])
+|> Chain.llm(:openai, tools: :auto, parallel_tool_calls: true)
+
+# The LLM will intelligently chain tools together
+research_assistant |> Chain.run(%{
+  research_request: "Latest developments in quantum computing with peer-reviewed sources"
+})
+
+# Role-based tool access
+def build_user_chain(user) do
+  available_tools = case user.role do
+    :admin -> 
+      [user_management_tool, system_config_tool, audit_log_tool] ++ basic_tools
+    :analyst ->
+      [data_query_tool, visualization_tool, export_tool] ++ basic_tools
+    :support ->
+      [ticket_tool, customer_lookup_tool, kb_search_tool] ++ basic_tools
+    _ ->
+      basic_tools  # read-only tools
+  end
+  
+  Chain.new(
+    system: "You are a {{role}} assistant with appropriate tool access",
+    user: "{{request}}"
+  )
+  |> Chain.with_tools(available_tools)
+  |> Chain.llm(:openai, tools: :auto)
+  |> Chain.with_metadata(%{user_id: user.id, role: user.role})
+end
+
+# Tool with confirmation for sensitive operations
+payment_tool = Tool.new(
+  name: "process_payment",
+  description: "Process a payment transaction (requires confirmation)",
+  parameters: %{
+    "amount" => %{type: "number", required: true, minimum: 0.01},
+    "currency" => %{type: "string", enum: ["USD", "EUR", "GBP"], required: true},
+    "recipient" => %{type: "string", required: true},
+    "description" => %{type: "string", required: true}
+  },
+  function: fn params ->
+    # Generate preview
+    preview = """
+    Payment Preview:
+    Amount: #{params["amount"]} #{params["currency"]}
+    To: #{params["recipient"]}
+    Description: #{params["description"]}
+    """
+    
+    # Require explicit confirmation
+    case PaymentConfirmation.request(preview) do
+      {:confirmed, auth_code} ->
+        case PaymentAPI.process(params, auth_code) do
+          {:ok, transaction_id} -> 
+            "Payment processed successfully. Transaction ID: #{transaction_id}"
+          {:error, reason} -> 
+            "Payment failed: #{reason}"
+        end
+      :cancelled ->
+        "Payment cancelled by user"
+      :timeout ->
+        "Payment confirmation timed out"
+    end
+  end,
+  metadata: %{
+    requires_confirmation: true,
+    sensitive: true,
+    audit_log: true
+  }
+)
+
+# Streaming tool for long operations
+report_generation_tool = Tool.new(
+  name: "generate_report",
+  description: "Generate detailed analysis report (may take time)",
+  parameters: %{
+    "data_source" => %{type: "string", required: true},
+    "report_type" => %{
+      type: "string",
+      enum: ["summary", "detailed", "executive"],
+      required: true
+    },
+    "format" => %{type: "string", enum: ["pdf", "html", "markdown"], default: "pdf"}
+  },
+  function: fn params ->
+    # Return a stream for progress updates
+    Stream.unfold(
+      ReportGenerator.start(params),
+      fn
+        :done -> nil
+        state ->
+          case ReportGenerator.next_section(state) do
+            {:ok, section, new_state} ->
+              {section, new_state}
+            :complete ->
+              {ReportGenerator.finalize(state), :done}
+          end
+      end
+    )
+    |> Enum.to_list()
+    |> Enum.join("\n")
+  end
+)
+
+# Tool middleware for security and monitoring
+defmodule SecureToolChain do
+  def create(tools) do
+    secured_tools = Enum.map(tools, fn tool ->
+      %{tool | 
+        function: wrap_with_middleware(
+          tool.function,
+          [
+            &rate_limit/2,
+            &audit_log/2,
+            &validate_permissions/2,
+            &sanitize_inputs/2
+          ]
+        )
+      }
+    end)
+    
+    Chain.new(
+      system: "You are a secure assistant. All tool usage is monitored.",
+      user: "{{request}}"
+    )
+    |> Chain.with_tools(secured_tools)
+    |> Chain.llm(:openai, tools: :auto)
+  end
+  
+  defp wrap_with_middleware(func, middleware) do
+    fn params ->
+      Enum.reduce_while(middleware, {:ok, params}, fn mw, {:ok, p} ->
+        case mw.(p) do
+          {:ok, processed} -> {:cont, {:ok, processed}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, final_params} -> func.(final_params)
+        error -> error
+      end
+    end
+  end
+end
+
+# Workflow automation tool
+workflow_tool = Tool.new(
+  name: "execute_workflow",
+  description: "Execute a predefined workflow with multiple steps",
+  parameters: %{
+    "workflow_name" => %{
+      type: "string",
+      enum: ["onboard_customer", "process_order", "generate_report"],
+      required: true
+    },
+    "parameters" => %{type: "object", required: true}
+  },
+  function: fn params ->
+    workflow = WorkflowRegistry.get(params["workflow_name"])
+    
+    result = workflow.steps
+    |> Enum.reduce_while(%{input: params["parameters"], outputs: []}, fn step, acc ->
+      case execute_workflow_step(step, acc) do
+        {:ok, output} ->
+          {:cont, %{acc | outputs: acc.outputs ++ [output]}}
+        {:error, reason} ->
+          {:halt, {:error, "Workflow failed at #{step.name}: #{reason}"}}
+      end
+    end)
+    
+    case result do
+      %{outputs: outputs} -> 
+        "Workflow completed successfully: #{format_outputs(outputs)}"
+      {:error, _} = error -> 
+        error
+    end
+  end
+)
+```
+
+### Custom Tools
 
 ```elixir
 weather_tool = Tool.new(
