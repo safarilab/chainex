@@ -85,14 +85,14 @@ defmodule Chainex.LLMTest do
   describe "stream/2" do
     test "returns enumerable for streaming" do
       stream = LLM.stream("Tell me a story")
-      # Without valid config, returns error list instead of stream
-      assert is_list(stream)
+      # Stream should be enumerable (could be a Stream or list)
+      assert Enumerable.impl_for(stream) != nil
     end
 
     test "accepts streaming options" do
       stream = LLM.stream("Hello", provider: :openai, temperature: 0.8)
-      # Without valid API key, returns error list instead of stream
-      assert is_list(stream)
+      # Stream should be enumerable (could be a Stream or list)
+      assert Enumerable.impl_for(stream) != nil
     end
   end
 

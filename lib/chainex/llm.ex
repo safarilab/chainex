@@ -50,10 +50,10 @@ defmodule Chainex.LLM do
   - Memory integration for conversation history
   """
 
-  alias Chainex.LLM.{OpenAI, Anthropic, Ollama}
+  alias Chainex.LLM.{OpenAI, Anthropic, Ollama, Mock}
   alias Chainex.{Context, Memory}
 
-  @type provider :: :openai | :anthropic | :ollama
+  @type provider :: :openai | :anthropic | :ollama | :mock
   @type role :: :system | :user | :assistant | :tool
   @type message :: %{role: role(), content: String.t()} | %{role: role(), content: String.t(), name: String.t()}
   @type messages :: [message()]
@@ -95,7 +95,8 @@ defmodule Chainex.LLM do
   @providers %{
     openai: OpenAI,
     anthropic: Anthropic,
-    ollama: Ollama
+    ollama: Ollama,
+    mock: Mock
   }
 
   @doc """
