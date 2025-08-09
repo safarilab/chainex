@@ -84,6 +84,17 @@ defmodule Chainex.LLM do
       total_tokens: pos_integer()
     },
     finish_reason: String.t()
+  } | %{
+    content: String.t(),
+    model: String.t(),
+    provider: provider(),
+    usage: %{
+      prompt_tokens: pos_integer(),
+      completion_tokens: pos_integer(),
+      total_tokens: pos_integer()
+    },
+    finish_reason: String.t(),
+    tool_calls: [map()]
   }
 
   @type streaming_chunk :: %{

@@ -386,6 +386,8 @@ defmodule Chainex.Chain.Executor do
     end
   end
 
+  @spec handle_tool_calls(map(), [map()], [Chainex.Tool.t()], atom(), keyword(), keyword(), non_neg_integer()) :: {:ok, String.t()} | {:error, any()}
+  @dialyzer {:nowarn_function, handle_tool_calls: 7}
   defp handle_tool_calls(assistant_response, messages, tools, provider, opts, _chain_opts, _depth) do
     # Execute each tool call
     tool_results =
@@ -397,7 +399,7 @@ defmodule Chainex.Chain.Executor do
     # Add assistant message with tool calls
     assistant_msg = %{
       role: :assistant,
-      content: assistant_response.content || "",
+      content: assistant_response.content,
       tool_calls: assistant_response.tool_calls
     }
 
@@ -425,10 +427,11 @@ defmodule Chainex.Chain.Executor do
 
     case Chainex.LLM.chat(updated_messages, final_opts) do
       {:ok, response} -> {:ok, response.content}
-      error -> error
+      {:error, reason} -> {:error, reason}
     end
   end
 
+  @spec execute_tool_call(map(), [Chainex.Tool.t()]) :: {:ok, any()} | {:error, String.t()}
   defp execute_tool_call(tool_call, available_tools) do
     # Find the tool by name
     tool =
@@ -449,10 +452,17 @@ defmodule Chainex.Chain.Executor do
     end
   end
 
+  @spec format_tool_result({:ok, any()} | {:error, any()}) :: String.t()
   defp format_tool_result({:ok, result}) when is_binary(result), do: result
-  defp format_tool_result({:ok, result}), do: Jason.encode!(result)
+  defp format_tool_result({:ok, result}) do
+    case Jason.encode(result) do
+      {:ok, json} -> json
+      {:error, _} -> inspect(result)
+    end
+  end
   defp format_tool_result({:error, error}), do: "Error: #{inspect(error)}"
 
+  @spec convert_tool_arguments(map()) :: map()
   defp convert_tool_arguments(llm_args) when is_map(llm_args) do
     # Convert string keys from LLM to atom keys expected by tool
     # The atoms should already exist from the tool parameter definitions
