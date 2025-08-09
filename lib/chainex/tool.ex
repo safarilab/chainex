@@ -274,6 +274,106 @@ defmodule Chainex.Tool do
     |> Enum.into(%{}, fn {key, schema} -> {key, schema.default} end)
   end
 
+  @doc """
+  Converts a tool to the format expected by LLM providers.
+
+  ## Examples
+
+      iex> tool = Tool.new(
+      ...>   name: "calculator",
+      ...>   description: "Performs calculations",
+      ...>   parameters: %{
+      ...>     expression: %{type: :string, required: true, description: "Math expression"}
+      ...>   },
+      ...>   function: fn _ -> {:ok, 42} end
+      ...> )
+      iex> Tool.to_llm_format(tool, :anthropic)
+      %{
+        "name" => "calculator",
+        "description" => "Performs calculations",
+        "input_schema" => %{
+          "type" => "object",
+          "properties" => %{
+            "expression" => %{"type" => "string", "description" => "Math expression"}
+          },
+          "required" => ["expression"]
+        }
+      }
+  """
+  @spec to_llm_format(t(), atom()) :: map()
+  def to_llm_format(%__MODULE__{} = tool, :anthropic) do
+    properties = 
+      tool.parameters
+      |> Enum.map(fn {name, schema} ->
+        {to_string(name), parameter_to_json_schema(schema)}
+      end)
+      |> Enum.into(%{})
+
+    required = 
+      tool.parameters
+      |> Enum.filter(fn {_name, schema} -> Map.get(schema, :required, false) end)
+      |> Enum.map(fn {name, _schema} -> to_string(name) end)
+
+    %{
+      "name" => to_string(tool.name),
+      "description" => tool.description,
+      "input_schema" => %{
+        "type" => "object",
+        "properties" => properties,
+        "required" => required
+      }
+    }
+  end
+
+  def to_llm_format(%__MODULE__{} = tool, :openai) do
+    properties = 
+      tool.parameters
+      |> Enum.map(fn {name, schema} ->
+        {to_string(name), parameter_to_json_schema(schema)}
+      end)
+      |> Enum.into(%{})
+
+    required = 
+      tool.parameters
+      |> Enum.filter(fn {_name, schema} -> Map.get(schema, :required, false) end)
+      |> Enum.map(fn {name, _schema} -> to_string(name) end)
+
+    %{
+      "type" => "function",
+      "function" => %{
+        "name" => to_string(tool.name),
+        "description" => tool.description,
+        "parameters" => %{
+          "type" => "object",
+          "properties" => properties,
+          "required" => required
+        }
+      }
+    }
+  end
+
+  defp parameter_to_json_schema(schema) do
+    base = %{"type" => type_to_json_type(Map.get(schema, :type, :string))}
+    
+    base
+    |> maybe_add_field("description", Map.get(schema, :description))
+    |> maybe_add_field("enum", Map.get(schema, :enum))
+    |> maybe_add_field("minimum", Map.get(schema, :min))
+    |> maybe_add_field("maximum", Map.get(schema, :max))
+  end
+
+  defp type_to_json_type(:string), do: "string"
+  defp type_to_json_type(:integer), do: "integer"
+  defp type_to_json_type(:float), do: "number"
+  defp type_to_json_type(:number), do: "number"
+  defp type_to_json_type(:boolean), do: "boolean"
+  defp type_to_json_type(:list), do: "array"
+  defp type_to_json_type(:map), do: "object"
+  defp type_to_json_type(_), do: "string"
+
+  defp maybe_add_field(map, _key, nil), do: map
+  defp maybe_add_field(map, key, value), do: Map.put(map, key, value)
+
   # Private helper functions
 
   defp normalize_parameters(parameters) when is_map(parameters) do

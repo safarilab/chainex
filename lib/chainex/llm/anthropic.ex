@@ -210,7 +210,7 @@ defmodule Chainex.LLM.Anthropic do
     |> maybe_add(:top_p, config)
     |> maybe_add(:top_k, config)
     |> maybe_add(:stop_sequences, config)
-    |> maybe_add(:tools, config)
+    |> maybe_add_tools(config)
     |> maybe_add(:tool_choice, config)
     |> maybe_add(:stream, config)
   end
@@ -231,17 +231,84 @@ defmodule Chainex.LLM.Anthropic do
     # System handled separately
     |> Enum.reject(fn msg -> msg.role == :system end)
     |> Enum.map(fn message ->
-      %{
-        "role" => format_role(message.role),
-        "content" => message.content
-      }
+      case message do
+        # Handle tool result messages
+        %{role: :tool, tool_use_id: id, content: content} ->
+          %{
+            "role" => "user",
+            "content" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => id,
+                "content" => format_tool_content(content)
+              }
+            ]
+          }
+        
+        # Handle assistant messages with tool calls
+        %{role: :assistant, tool_calls: tool_calls} when tool_calls != nil ->
+          content_blocks = 
+            if Map.get(message, :content) && message.content != "" do
+              [%{"type" => "text", "text" => message.content}]
+            else
+              []
+            end
+          
+          tool_blocks = Enum.map(tool_calls, fn call ->
+            %{
+              "type" => "tool_use",
+              "id" => call.id,
+              "name" => call.name,
+              "input" => call.arguments
+            }
+          end)
+          
+          %{
+            "role" => "assistant",
+            "content" => content_blocks ++ tool_blocks
+          }
+        
+        # Handle regular messages
+        _ ->
+          %{
+            "role" => format_role(message.role),
+            "content" => message.content
+          }
+      end
     end)
   end
 
   defp format_role(:user), do: "user"
   defp format_role(:assistant), do: "assistant"
+  defp format_role(:tool), do: "user"  # Tool results go as user messages in Anthropic
   defp format_role(role) when is_binary(role), do: role
   defp format_role(role), do: to_string(role)
+
+  defp format_tool_content(content) when is_binary(content), do: content
+  defp format_tool_content(content), do: Jason.encode!(content)
+
+  defp maybe_add_tools(body, config) do
+    case Keyword.get(config, :tools) do
+      nil -> body
+      [] -> body
+      tools when is_list(tools) ->
+        # Tools should already be in the correct format from the Executor
+        Map.put(body, "tools", tools)
+    end
+  end
+
+  defp maybe_add(body, :tool_choice, config) do
+    case Keyword.get(config, :tool_choice) do
+      nil -> body
+      :auto -> Map.put(body, "tool_choice", %{"type" => "auto"})
+      :none -> body  # Don't send tool_choice for none
+      :required -> Map.put(body, "tool_choice", %{"type" => "any"})
+      :any -> Map.put(body, "tool_choice", %{"type" => "any"})
+      {:tool, name} -> Map.put(body, "tool_choice", %{"type" => "tool", "name" => name})
+      value when is_map(value) -> Map.put(body, "tool_choice", value)
+      _ -> body
+    end
+  end
 
   defp maybe_add(body, key, config) do
     case Keyword.get(config, key) do
@@ -315,7 +382,7 @@ defmodule Chainex.LLM.Anthropic do
     end
   end
 
-  defp parse_chat_response(%{"content" => [%{"text" => text} | _]} = response) do
+  defp parse_chat_response(%{"content" => content} = response) when is_list(content) do
     usage = %{
       prompt_tokens: get_in(response, ["usage", "input_tokens"]) || 0,
       completion_tokens: get_in(response, ["usage", "output_tokens"]) || 0,
@@ -324,19 +391,50 @@ defmodule Chainex.LLM.Anthropic do
           (get_in(response, ["usage", "output_tokens"]) || 0)
     }
 
+    # Check for tool use in the content
+    {text_content, tool_calls} = parse_content_blocks(content)
+
     response_data = %{
-      content: text,
+      content: text_content || "",
       model: response["model"],
       provider: :anthropic,
       usage: usage,
       finish_reason: response["stop_reason"]
     }
 
+    # Add tool_calls if present
+    response_data = 
+      if tool_calls != [] do
+        Map.put(response_data, :tool_calls, tool_calls)
+      else
+        response_data
+      end
+
     {:ok, response_data}
   end
 
   defp parse_chat_response(response) do
     {:error, {:unexpected_response_format, response}}
+  end
+
+  defp parse_content_blocks(content) do
+    Enum.reduce(content, {"", []}, fn block, {text_acc, tools_acc} ->
+      case block do
+        %{"type" => "text", "text" => text} ->
+          {text_acc <> text, tools_acc}
+        
+        %{"type" => "tool_use", "id" => id, "name" => name, "input" => input} ->
+          tool_call = %{
+            id: id,
+            name: name,
+            arguments: input
+          }
+          {text_acc, tools_acc ++ [tool_call]}
+        
+        _ ->
+          {text_acc, tools_acc}
+      end
+    end)
   end
 
   # Streaming implementation
