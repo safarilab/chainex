@@ -9,7 +9,11 @@ defmodule Chainex.MixProject do
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       aliases: aliases(),
-      deps: deps()
+      deps: deps(),
+      preferred_cli_env: [
+        "test.integration": :test,
+        "test.all": :test
+      ]
     ]
   end
 
@@ -27,7 +31,9 @@ defmodule Chainex.MixProject do
   # Aliases for convenience
   defp aliases do
     [
-      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
+      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test --exclude integration"],
+      "test.integration": ["ecto.create --quiet", "ecto.migrate --quiet", "test --only integration"],
+      "test.all": ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
     ]
   end
 
