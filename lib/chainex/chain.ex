@@ -98,6 +98,79 @@ defmodule Chainex.Chain do
   end
 
   @doc """
+  Routes to an appropriate LLM based on a routing function or map.
+  
+  ## Examples
+  
+      # Route based on task type
+      chain |> Chain.route_llm(%{
+        reasoning: {:openai, model: "gpt-4"},
+        summary: {:anthropic, model: "claude-3-haiku"}
+      }, task: :reasoning)
+      
+      # Dynamic routing based on input
+      chain |> Chain.route_llm(fn input ->
+        if String.length(input) > 10000 do
+          {:anthropic, model: "claude-3-opus"}
+        else
+          {:openai, model: "gpt-4"}
+        end
+      end)
+  """
+  @spec route_llm(t(), map() | function(), keyword()) :: t()
+  def route_llm(%__MODULE__{} = chain, router, opts \\ []) when is_map(router) or is_function(router) do
+    step = {:route_llm, router, opts}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Conditionally selects an LLM provider based on a predicate.
+  
+  ## Examples
+  
+      chain |> Chain.llm_if(
+        fn _input, vars -> vars.use_premium end,
+        {:openai, model: "gpt-4"},
+        {:openai, model: "gpt-3.5-turbo"}
+      )
+  """
+  @spec llm_if(t(), function(), {atom(), keyword()}, {atom(), keyword()}) :: t()
+  def llm_if(%__MODULE__{} = chain, predicate, if_provider, else_provider) do
+    step = {:llm_if, predicate, if_provider, else_provider}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Executes multiple LLMs in parallel and returns all results.
+  
+  ## Examples
+  
+      chain |> Chain.parallel_llm([
+        {:openai, model: "gpt-4"},
+        {:anthropic, model: "claude-3-opus"}
+      ])
+  """
+  @spec parallel_llm(t(), list({atom(), keyword()})) :: t()
+  def parallel_llm(%__MODULE__{} = chain, providers) when is_list(providers) do
+    step = {:parallel_llm, providers, []}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Selects an LLM that supports the required capability.
+  
+  ## Examples
+  
+      chain |> Chain.llm_with_capability(:long_context, max_tokens: 100_000)
+      chain |> Chain.llm_with_capability(:image_generation)
+  """
+  @spec llm_with_capability(t(), atom(), keyword()) :: t()
+  def llm_with_capability(%__MODULE__{} = chain, capability, opts \\ []) do
+    step = {:llm_with_capability, capability, opts}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
   Adds a transform step to the chain.
 
   The transform function receives the previous step's output and optionally the variables.
@@ -242,6 +315,20 @@ defmodule Chainex.Chain do
   @spec run(t(), variables()) :: {:ok, any()} | {:error, any()}
   def run(%__MODULE__{} = chain, variables \\ %{}) do
     Chainex.Chain.Executor.execute(chain, variables)
+  end
+
+  @doc """
+  Runs the chain and returns result with metadata.
+  
+  ## Examples
+  
+      {:ok, result, metadata} = Chain.run_with_metadata(chain)
+      IO.puts("Total cost: \#{metadata.total_cost}")
+      IO.puts("Total tokens: \#{metadata.total_tokens}")
+  """
+  @spec run_with_metadata(t(), variables()) :: {:ok, any(), map()} | {:error, any()}
+  def run_with_metadata(%__MODULE__{} = chain, variables \\ %{}) do
+    Chainex.Chain.Executor.execute_with_metadata(chain, variables)
   end
 
   @doc """
