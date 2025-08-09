@@ -9,7 +9,7 @@ defmodule Chainex.LLMToolsTest do
       calculator = Calculator.new()
       
       # Mock LLM that simulates tool calling
-      mock_llm = create_tool_calling_mock()
+      _mock_llm = create_tool_calling_mock()
       
       chain = Chain.new("What is 25 times 4?")
       |> Chain.with_tools([calculator])

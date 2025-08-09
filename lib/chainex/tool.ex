@@ -352,6 +352,11 @@ defmodule Chainex.Tool do
     }
   end
 
+  # Mock provider uses Anthropic format for testing
+  def to_llm_format(%__MODULE__{} = tool, :mock) do
+    to_llm_format(tool, :anthropic)
+  end
+
   defp parameter_to_json_schema(schema) do
     base = %{"type" => type_to_json_type(Map.get(schema, :type, :string))}
     

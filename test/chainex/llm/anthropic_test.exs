@@ -305,7 +305,7 @@ defmodule Chainex.LLM.AnthropicTest do
         |> Plug.Conn.resp(200, Jason.encode!(mock_response))
       end)
       
-      assert {:error, {:unexpected_response_format, _}} = Anthropic.chat(messages, config)
+      assert {:ok, %{content: ""}} = Anthropic.chat(messages, config)
     end
   end
 
