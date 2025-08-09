@@ -42,7 +42,7 @@ defmodule Chainex.Chain.Executor do
   # Execute individual step types
 
   defp execute_step({:llm, provider, opts}, input, chain, variables) do
-    with {:ok, messages} <- build_messages(chain, input, variables),
+    with {:ok, messages} <- build_messages(chain, input, variables, opts),
          {:ok, llm_opts} <- prepare_llm_options(chain, opts, variables) do
       # Check if tools are enabled
       tools = Keyword.get(llm_opts, :tools, [])
@@ -188,29 +188,15 @@ defmodule Chainex.Chain.Executor do
     end
   end
 
-  defp build_messages(chain, input, variables) do
-    messages = []
-
-    # Add system message if present
-    messages =
-      if chain.system_prompt do
-        case VariableResolver.resolve(chain.system_prompt, variables) do
-          {:ok, resolved} ->
-            messages ++ [%{role: :system, content: resolved}]
-
-          {:error, _} = error ->
-            error
-        end
-      else
-        messages
-      end
-
-    # Check if we had an error from system prompt resolution
-    case messages do
+  defp build_messages(chain, input, variables, step_opts) do
+    # Handle system message (step-level takes precedence over chain-level)
+    case get_system_message(chain, step_opts, variables) do
       {:error, _} = error ->
         error
-
-      message_list ->
+        
+      {:ok, system_content} ->
+        messages = if system_content, do: [%{role: :system, content: system_content}], else: []
+        
         # Add user message
         user_content =
           case input do
@@ -218,9 +204,24 @@ defmodule Chainex.Chain.Executor do
             content -> to_string(content)
           end
 
-        messages = message_list ++ [%{role: :user, content: user_content}]
+        messages = messages ++ [%{role: :user, content: user_content}]
 
         {:ok, messages}
+    end
+  end
+
+  defp get_system_message(chain, step_opts, variables) do
+    cond do
+      # Step-level system message takes precedence
+      Keyword.has_key?(step_opts, :system) ->
+        {:ok, Keyword.get(step_opts, :system)}
+        
+      # Fall back to chain system prompt
+      chain.system_prompt ->
+        VariableResolver.resolve(chain.system_prompt, variables)
+        
+      true ->
+        {:ok, nil}
     end
   end
 
@@ -341,8 +342,9 @@ defmodule Chainex.Chain.Executor do
 
   # Convert map keys to atoms only if they exist as struct fields
   defp convert_keys_for_struct(map, module) when is_map(map) do
-    # Get the struct fields
+    # Get the struct fields and their types
     struct_fields = module.__struct__() |> Map.keys() |> MapSet.new()
+    field_types = get_struct_field_types(module)
     
     # Filter and convert keys
     filtered_map = 
@@ -358,7 +360,17 @@ defmodule Chainex.Chain.Executor do
           
           # Only include the key if it's a valid struct field
           if MapSet.member?(struct_fields, atom_key) do
-            Map.put(acc, atom_key, convert_keys_for_struct(value, module))
+            # Convert nested structs if the field type is a struct module
+            converted_value = case Map.get(field_types, atom_key) do
+              nested_module when is_atom(nested_module) and nested_module != nil ->
+                # Try to convert to nested struct if it's a map
+                convert_nested_struct(value, nested_module)
+              _ ->
+                # Regular conversion for lists and other types
+                convert_keys_for_struct(value, module)
+            end
+            
+            Map.put(acc, atom_key, converted_value)
           else
             # Skip unknown fields
             acc
@@ -367,7 +379,15 @@ defmodule Chainex.Chain.Executor do
         {key, value}, acc when is_atom(key) ->
           # Key is already an atom, check if it's a valid field
           if MapSet.member?(struct_fields, key) do
-            Map.put(acc, key, convert_keys_for_struct(value, module))
+            # Convert nested structs if the field type is a struct module
+            converted_value = case Map.get(field_types, key) do
+              nested_module when is_atom(nested_module) and nested_module != nil ->
+                convert_nested_struct(value, nested_module)
+              _ ->
+                convert_keys_for_struct(value, module)
+            end
+            
+            Map.put(acc, key, converted_value)
           else
             acc
           end
@@ -385,6 +405,148 @@ defmodule Chainex.Chain.Executor do
   end
   
   defp convert_keys_for_struct(value, _module), do: value
+
+  # Get struct field types using naming conventions and module introspection
+  defp get_struct_field_types(module) do
+    try do
+      # Get the current module's namespace
+      module_namespace = get_module_namespace(module)
+      
+      # Get all struct fields
+      struct_fields = module.__struct__() |> Map.keys() |> Enum.reject(&(&1 == :__struct__))
+      
+      # Map each field to potential nested struct modules
+      Enum.reduce(struct_fields, %{}, fn field, acc ->
+        case find_nested_struct_module(field, module_namespace, module) do
+          nil -> acc
+          nested_module -> Map.put(acc, field, nested_module)
+        end
+      end)
+    rescue
+      _ -> %{}
+    end
+  end
+
+  # Get the namespace of a module (e.g., MyApp.User -> MyApp)
+  defp get_module_namespace(module) do
+    module
+    |> Module.split()
+    |> Enum.drop(-1)
+  end
+
+  # Find nested struct module based on field name conventions
+  defp find_nested_struct_module(field_name, namespace, parent_module) when is_atom(field_name) do
+    # Convert field name to potential module names
+    potential_modules = generate_potential_struct_names(field_name, namespace, parent_module)
+    
+    # Find the first module that exists and defines a struct
+    Enum.find_value(potential_modules, fn module_name ->
+      if is_struct_module?(module_name), do: module_name, else: nil
+    end)
+  end
+
+  # Generate potential struct module names from field name
+  defp generate_potential_struct_names(field_name, namespace, parent_module) do
+    field_string = Atom.to_string(field_name)
+    
+    # Generate different naming conventions:
+    # 1. CamelCase: personal_info -> PersonalInfo
+    # 2. Singular: addresses -> Address  
+    # 3. Direct: company -> Company
+    camel_case = 
+      field_string
+      |> String.split("_")
+      |> Enum.map(&String.capitalize/1)
+      |> Enum.join("")
+    
+    singular = singularize_field_name(field_string)
+    |> String.split("_")
+    |> Enum.map(&String.capitalize/1)
+    |> Enum.join("")
+    
+    direct = String.capitalize(field_string)
+    
+    # Try different module paths
+    base_names = [camel_case, singular, direct] |> Enum.uniq()
+    
+    Enum.flat_map(base_names, fn name ->
+      potential_modules = [
+        # Try the same module as the parent (common in tests)
+        get_sibling_module(parent_module, name)
+      ]
+      
+      # Add namespace module if namespace exists
+      if namespace != [] do
+        [Module.concat(namespace ++ [name]) | potential_modules]
+      else
+        potential_modules
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  # Simple singularization for common cases
+  defp singularize_field_name(field_string) do
+    cond do
+      String.ends_with?(field_string, "ies") -> String.slice(field_string, 0, String.length(field_string) - 3) <> "y"
+      String.ends_with?(field_string, "ses") -> String.slice(field_string, 0, String.length(field_string) - 2)
+      String.ends_with?(field_string, "s") and not String.ends_with?(field_string, "ss") -> 
+        String.slice(field_string, 0, String.length(field_string) - 1)
+      true -> field_string
+    end
+  end
+
+  # Get a sibling module (same parent namespace)
+  defp get_sibling_module(parent_module, child_name) do
+    try do
+      # Get the parent module's full path
+      parent_parts = Module.split(parent_module)
+      # Replace the last part with the child name
+      sibling_parts = List.replace_at(parent_parts, -1, child_name)
+      Module.concat(sibling_parts)
+    rescue
+      _ -> nil
+    end
+  end
+
+  # Check if a module defines a struct
+  defp is_struct_module?(module) do
+    try do
+      Code.ensure_loaded!(module)
+      function_exported?(module, :__struct__, 0)
+    rescue
+      _ -> false
+    end
+  end
+
+  # Convert nested struct if the value is a map and the target is a struct module
+  defp convert_nested_struct(value, target_module) when is_map(value) do
+    if is_struct_module?(target_module) do
+      try do
+        # Recursively convert nested struct
+        converted_map = convert_keys_for_struct(value, target_module)
+        struct(target_module, converted_map)
+      rescue
+        _ -> value  # Fall back to original value if conversion fails
+      end
+    else
+      value
+    end
+  end
+
+  # Handle arrays - convert each element if it's a map
+  defp convert_nested_struct(value, target_module) when is_list(value) do
+    if is_struct_module?(target_module) do
+      Enum.map(value, fn item ->
+        convert_nested_struct(item, target_module)
+      end)
+    else
+      value
+    end
+  end
+
+  defp convert_nested_struct(value, _target_module), do: value
 
   # LLM tool calling support
   defp execute_llm_with_tools(messages, provider, opts, chain_opts, depth) do

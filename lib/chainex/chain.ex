@@ -162,7 +162,72 @@ defmodule Chainex.Chain do
   def parse(%__MODULE__{} = chain, parser_type, schema_or_module \\ nil) do
     opts = if schema_or_module, do: [schema: schema_or_module], else: []
     step = {:parse, parser_type, opts}
-    %{chain | steps: chain.steps ++ [step]}
+    
+    # Auto-inject format instructions if the previous step is an LLM call
+    updated_chain = inject_format_instructions(chain, parser_type, schema_or_module)
+    
+    %{updated_chain | steps: updated_chain.steps ++ [step]}
+  end
+
+  # Helper functions for format injection
+
+  defp inject_format_instructions(%__MODULE__{steps: steps} = chain, parser_type, schema_or_module) do
+    case List.last(steps) do
+      {:llm, provider, opts} ->
+        # Modify the last LLM step to include format instructions
+        format_instructions = generate_format_instructions(parser_type, schema_or_module)
+        updated_opts = inject_instructions_into_llm_opts(opts, format_instructions)
+        updated_step = {:llm, provider, updated_opts}
+        updated_steps = List.replace_at(steps, -1, updated_step)
+        %{chain | steps: updated_steps}
+        
+      _ ->
+        # Previous step is not an LLM call, no modification needed
+        chain
+    end
+  end
+
+  defp generate_format_instructions(:json, nil) do
+    "\n\nIMPORTANT: Please respond with valid JSON only. Do not include any explanatory text before or after the JSON."
+  end
+
+  defp generate_format_instructions(:json, schema) when is_map(schema) do
+    fields = schema |> Map.keys() |> Enum.map(&to_string/1) |> Enum.join(", ")
+    "\n\nIMPORTANT: Please respond with valid JSON only containing these fields: #{fields}. Do not include any explanatory text before or after the JSON."
+  end
+
+  defp generate_format_instructions(:struct, module) when is_atom(module) do
+    # Get struct fields to provide guidance
+    fields = try do
+      module.__struct__()
+      |> Map.keys()
+      |> Enum.reject(&(&1 == :__struct__))
+      |> Enum.map(&to_string/1)
+      |> Enum.join(", ")
+    rescue
+      _ -> "appropriate"
+    end
+    
+    "\n\nIMPORTANT: Please respond with valid JSON only containing these fields: #{fields}. Do not include any explanatory text before or after the JSON."
+  end
+
+  defp generate_format_instructions(_, _) do
+    # For custom parsers or unknown types, provide generic instruction
+    "\n\nIMPORTANT: Please provide your response in the exact format requested."
+  end
+
+  defp inject_instructions_into_llm_opts(opts, instructions) do
+    # Check if there's a system message in the opts, if so append to it
+    case Keyword.get(opts, :system) do
+      nil ->
+        # No existing system message, add format instructions as system message
+        Keyword.put(opts, :system, String.trim(instructions))
+        
+      existing_system ->
+        # Append to existing system message
+        updated_system = existing_system <> instructions
+        Keyword.put(opts, :system, updated_system)
+    end
   end
 
   # Execution functions

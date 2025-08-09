@@ -6,6 +6,26 @@ defmodule Chainex.ChainParsingTest do
   defmodule TestUser do
     defstruct [:name, :age, :email]
   end
+
+  defmodule Address do
+    defstruct [:street, :city, :country, :postal_code]
+  end
+
+  defmodule Company do
+    defstruct [:name, :industry, :size, :address]
+  end
+
+  defmodule ComplexUser do
+    defstruct [:id, :personal_info, :work_info, :addresses, :metadata]
+  end
+
+  defmodule PersonalInfo do
+    defstruct [:first_name, :last_name, :date_of_birth, :phone]
+  end
+
+  defmodule WorkInfo do
+    defstruct [:position, :department, :salary, :start_date, :company]
+  end
   
   describe "JSON parsing" do
     test "parses valid JSON string without schema" do
