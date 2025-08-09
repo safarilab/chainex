@@ -296,20 +296,22 @@ defmodule Chainex.Chain.Executor do
   defp parse_struct(input, module) when is_binary(input) do
     with {:ok, data} <- Jason.decode(input) do
       try do
-        struct_data = string_keys_to_atoms(data)
+        struct_data = convert_keys_for_struct(data, module)
         {:ok, struct(module, struct_data)}
       rescue
-        e -> {:error, Exception.message(e)}
+        e -> 
+          {:error, "Failed to parse struct #{module}: #{Exception.message(e)}"}
       end
     end
   end
 
   defp parse_struct(input, module) when is_map(input) do
     try do
-      struct_data = string_keys_to_atoms(input)
+      struct_data = convert_keys_for_struct(input, module)
       {:ok, struct(module, struct_data)}
     rescue
-      e -> {:error, Exception.message(e)}
+      e -> 
+        {:error, "Failed to parse struct #{module}: #{Exception.message(e)}"}
     end
   end
 
@@ -336,21 +338,53 @@ defmodule Chainex.Chain.Executor do
     end
   end
 
-  defp string_keys_to_atoms(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_binary(key) ->
-        {String.to_existing_atom(key), string_keys_to_atoms(value)}
 
-      {key, value} ->
-        {key, string_keys_to_atoms(value)}
-    end)
+  # Convert map keys to atoms only if they exist as struct fields
+  defp convert_keys_for_struct(map, module) when is_map(map) do
+    # Get the struct fields
+    struct_fields = module.__struct__() |> Map.keys() |> MapSet.new()
+    
+    # Filter and convert keys
+    filtered_map = 
+      Enum.reduce(map, %{}, fn
+        {key, value}, acc when is_binary(key) ->
+          # Try to convert to existing atom first, fallback to creating if needed
+          atom_key = try do
+            String.to_existing_atom(key)
+          rescue
+            ArgumentError ->
+              String.to_atom(key)
+          end
+          
+          # Only include the key if it's a valid struct field
+          if MapSet.member?(struct_fields, atom_key) do
+            Map.put(acc, atom_key, convert_keys_for_struct(value, module))
+          else
+            # Skip unknown fields
+            acc
+          end
+          
+        {key, value}, acc when is_atom(key) ->
+          # Key is already an atom, check if it's a valid field
+          if MapSet.member?(struct_fields, key) do
+            Map.put(acc, key, convert_keys_for_struct(value, module))
+          else
+            acc
+          end
+          
+        {key, value}, acc ->
+          # Other key types, keep as-is if they might be valid
+          Map.put(acc, key, convert_keys_for_struct(value, module))
+      end)
+    
+    filtered_map
   end
-
-  defp string_keys_to_atoms(list) when is_list(list) do
-    Enum.map(list, &string_keys_to_atoms/1)
+  
+  defp convert_keys_for_struct(list, module) when is_list(list) do
+    Enum.map(list, &convert_keys_for_struct(&1, module))
   end
-
-  defp string_keys_to_atoms(value), do: value
+  
+  defp convert_keys_for_struct(value, _module), do: value
 
   # LLM tool calling support
   defp execute_llm_with_tools(messages, provider, opts, chain_opts, depth) do
