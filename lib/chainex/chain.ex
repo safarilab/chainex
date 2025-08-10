@@ -99,9 +99,9 @@ defmodule Chainex.Chain do
 
   @doc """
   Routes to an appropriate LLM based on a routing function or map.
-  
+
   ## Examples
-  
+
       # Route based on task type
       chain |> Chain.route_llm(%{
         reasoning: {:openai, model: "gpt-4"},
@@ -118,16 +118,17 @@ defmodule Chainex.Chain do
       end)
   """
   @spec route_llm(t(), map() | function(), keyword()) :: t()
-  def route_llm(%__MODULE__{} = chain, router, opts \\ []) when is_map(router) or is_function(router) do
+  def route_llm(%__MODULE__{} = chain, router, opts \\ [])
+      when is_map(router) or is_function(router) do
     step = {:route_llm, router, opts}
     %{chain | steps: chain.steps ++ [step]}
   end
 
   @doc """
   Conditionally selects an LLM provider based on a predicate.
-  
+
   ## Examples
-  
+
       chain |> Chain.llm_if(
         fn _input, vars -> vars.use_premium end,
         {:openai, model: "gpt-4"},
@@ -142,9 +143,9 @@ defmodule Chainex.Chain do
 
   @doc """
   Executes multiple LLMs in parallel and returns all results.
-  
+
   ## Examples
-  
+
       chain |> Chain.parallel_llm([
         {:openai, model: "gpt-4"},
         {:anthropic, model: "claude-3-opus"}
@@ -158,9 +159,9 @@ defmodule Chainex.Chain do
 
   @doc """
   Selects an LLM that supports the required capability.
-  
+
   ## Examples
-  
+
       chain |> Chain.llm_with_capability(:long_context, max_tokens: 100_000)
       chain |> Chain.llm_with_capability(:image_generation)
   """
@@ -235,16 +236,20 @@ defmodule Chainex.Chain do
   def parse(%__MODULE__{} = chain, parser_type, schema_or_module \\ nil) do
     opts = if schema_or_module, do: [schema: schema_or_module], else: []
     step = {:parse, parser_type, opts}
-    
+
     # Auto-inject format instructions if the previous step is an LLM call
     updated_chain = inject_format_instructions(chain, parser_type, schema_or_module)
-    
+
     %{updated_chain | steps: updated_chain.steps ++ [step]}
   end
 
   # Helper functions for format injection
 
-  defp inject_format_instructions(%__MODULE__{steps: steps} = chain, parser_type, schema_or_module) do
+  defp inject_format_instructions(
+         %__MODULE__{steps: steps} = chain,
+         parser_type,
+         schema_or_module
+       ) do
     case List.last(steps) do
       {:llm, provider, opts} ->
         # Modify the last LLM step to include format instructions
@@ -253,7 +258,7 @@ defmodule Chainex.Chain do
         updated_step = {:llm, provider, updated_opts}
         updated_steps = List.replace_at(steps, -1, updated_step)
         %{chain | steps: updated_steps}
-        
+
       _ ->
         # Previous step is not an LLM call, no modification needed
         chain
@@ -266,21 +271,23 @@ defmodule Chainex.Chain do
 
   defp generate_format_instructions(:json, schema) when is_map(schema) do
     fields = schema |> Map.keys() |> Enum.map(&to_string/1) |> Enum.join(", ")
+
     "\n\nIMPORTANT: Please respond with valid JSON only containing these fields: #{fields}. Do not include any explanatory text before or after the JSON."
   end
 
   defp generate_format_instructions(:struct, module) when is_atom(module) do
     # Get struct fields to provide guidance
-    fields = try do
-      module.__struct__()
-      |> Map.keys()
-      |> Enum.reject(&(&1 == :__struct__))
-      |> Enum.map(&to_string/1)
-      |> Enum.join(", ")
-    rescue
-      _ -> "appropriate"
-    end
-    
+    fields =
+      try do
+        module.__struct__()
+        |> Map.keys()
+        |> Enum.reject(&(&1 == :__struct__))
+        |> Enum.map(&to_string/1)
+        |> Enum.join(", ")
+      rescue
+        _ -> "appropriate"
+      end
+
     "\n\nIMPORTANT: Please respond with valid JSON only containing these fields: #{fields}. Do not include any explanatory text before or after the JSON."
   end
 
@@ -295,7 +302,7 @@ defmodule Chainex.Chain do
       nil ->
         # No existing system message, add format instructions as system message
         Keyword.put(opts, :system, String.trim(instructions))
-        
+
       existing_system ->
         # Append to existing system message
         updated_system = existing_system <> instructions
@@ -319,9 +326,9 @@ defmodule Chainex.Chain do
 
   @doc """
   Runs the chain and returns result with metadata.
-  
+
   ## Examples
-  
+
       {:ok, result, metadata} = Chain.run_with_metadata(chain)
       IO.puts("Total cost: \#{metadata.total_cost}")
       IO.puts("Total tokens: \#{metadata.total_tokens}")
@@ -379,15 +386,17 @@ defmodule Chainex.Chain do
   """
   @spec with_memory(t(), atom(), keyword() | map()) :: t()
   def with_memory(%__MODULE__{} = chain, memory_type, options \\ []) do
-    memory_options = case options do
-      opts when is_list(opts) -> Enum.into(opts, %{})
-      opts when is_map(opts) -> opts
-    end
-    
-    updated_options = chain.options
-    |> Keyword.put(:memory, memory_type)
-    |> Keyword.put(:memory_options, memory_options)
-    
+    memory_options =
+      case options do
+        opts when is_list(opts) -> Enum.into(opts, %{})
+        opts when is_map(opts) -> opts
+      end
+
+    updated_options =
+      chain.options
+      |> Keyword.put(:memory, memory_type)
+      |> Keyword.put(:memory_options, memory_options)
+
     %{chain | options: updated_options}
   end
 
@@ -438,7 +447,7 @@ defmodule Chainex.Chain do
       max_attempts: Keyword.get(opts, :max_attempts, 3),
       delay: Keyword.get(opts, :delay, 1000)
     }
-    
+
     updated_options = Keyword.put(chain.options, :retry, retry_config)
     %{chain | options: updated_options}
   end
@@ -452,7 +461,8 @@ defmodule Chainex.Chain do
       chain |> Chain.with_timeout(10_000)
   """
   @spec with_timeout(t(), non_neg_integer()) :: t()
-  def with_timeout(%__MODULE__{} = chain, timeout_ms) when is_integer(timeout_ms) and timeout_ms >= 0 do
+  def with_timeout(%__MODULE__{} = chain, timeout_ms)
+      when is_integer(timeout_ms) and timeout_ms >= 0 do
     updated_options = Keyword.put(chain.options, :timeout, timeout_ms)
     %{chain | options: updated_options}
   end

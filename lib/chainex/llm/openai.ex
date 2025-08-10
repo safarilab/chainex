@@ -43,20 +43,20 @@ defmodule Chainex.LLM.OpenAI do
   @default_timeout 30_000
 
   @type config :: [
-    api_key: String.t(),
-    model: String.t(),
-    base_url: String.t(),
-    organization: String.t() | nil,
-    timeout: pos_integer(),
-    temperature: float(),
-    max_tokens: pos_integer(),
-    top_p: float(),
-    frequency_penalty: float(),
-    presence_penalty: float(),
-    stop: String.t() | [String.t()] | nil,
-    tools: [map()] | nil,
-    tool_choice: String.t() | map() | nil
-  ]
+          api_key: String.t(),
+          model: String.t(),
+          base_url: String.t(),
+          organization: String.t() | nil,
+          timeout: pos_integer(),
+          temperature: float(),
+          max_tokens: pos_integer(),
+          top_p: float(),
+          frequency_penalty: float(),
+          presence_penalty: float(),
+          stop: String.t() | [String.t()] | nil,
+          tools: [map()] | nil,
+          tool_choice: String.t() | map() | nil
+        ]
 
   @doc """
   Send a chat completion request to OpenAI
@@ -66,6 +66,7 @@ defmodule Chainex.LLM.OpenAI do
     case validate_config(config) do
       :ok ->
         do_chat_request(messages, config)
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -79,6 +80,7 @@ defmodule Chainex.LLM.OpenAI do
     case validate_config(config) do
       :ok ->
         do_stream_request(messages, config)
+
       {:error, reason} ->
         [error: reason]
     end
@@ -86,7 +88,7 @@ defmodule Chainex.LLM.OpenAI do
 
   @doc """
   Count tokens for the given messages
-  
+
   Uses a rough estimation based on the tiktoken approach:
   - ~4 characters per token for English text
   - Additional tokens for message formatting
@@ -94,26 +96,30 @@ defmodule Chainex.LLM.OpenAI do
   @spec count_tokens(list(), config()) :: {:ok, pos_integer()} | {:error, any()}
   def count_tokens(messages, _config) do
     # Rough estimation - for precise counting, would need tiktoken integration
-    base_tokens = 3  # Base tokens per message for formatting
-    
-    total_tokens = 
+    # Base tokens per message for formatting
+    base_tokens = 3
+
+    total_tokens =
       messages
       |> Enum.reduce(0, fn message, acc ->
         content_length = String.length(message.content)
-        role_tokens = case message.role do
-          :system -> 4
-          :user -> 4
-          :assistant -> 4
-          :tool -> 4
-          _ -> 4
-        end
-        
+
+        role_tokens =
+          case message.role do
+            :system -> 4
+            :user -> 4
+            :assistant -> 4
+            :tool -> 4
+            _ -> 4
+          end
+
         # Rough estimation: 4 chars ≈ 1 token
         content_tokens = div(content_length, 4) + 1
         acc + base_tokens + role_tokens + content_tokens
       end)
-    
-    {:ok, total_tokens + 3} # +3 for conversation priming
+
+    # +3 for conversation priming
+    {:ok, total_tokens + 3}
   end
 
   @doc """
@@ -124,6 +130,7 @@ defmodule Chainex.LLM.OpenAI do
     case validate_config(config) do
       :ok ->
         do_models_request(config)
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -143,11 +150,11 @@ defmodule Chainex.LLM.OpenAI do
     url = build_url(config, "/chat/completions")
     headers = build_headers(config)
     body = build_chat_body(messages, config)
-    
+
     case http_request(:post, url, headers, body, config) do
       {:ok, response} ->
         parse_chat_response(response)
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -157,7 +164,7 @@ defmodule Chainex.LLM.OpenAI do
     url = build_url(config, "/chat/completions")
     headers = build_headers(config)
     body = build_chat_body(messages, Keyword.put(config, :stream, true))
-    
+
     Stream.resource(
       fn -> start_stream(url, headers, body, config) end,
       fn connection -> read_stream_chunk(connection) end,
@@ -168,24 +175,24 @@ defmodule Chainex.LLM.OpenAI do
   defp do_models_request(config) do
     url = build_url(config, "/models")
     headers = build_headers(config)
-    
+
     case http_request(:get, url, headers, nil, config) do
       {:ok, %{"data" => models}} when is_list(models) ->
-        model_ids = 
+        model_ids =
           models
-          |> Enum.filter(fn model -> 
+          |> Enum.filter(fn model ->
             # Filter for chat completion models
             model_id = model["id"]
             String.contains?(model_id, "gpt") or String.contains?(model_id, "chat")
           end)
           |> Enum.map(fn model -> model["id"] end)
           |> Enum.sort()
-        
+
         {:ok, model_ids}
-      
+
       {:ok, response} ->
         {:error, {:unexpected_response, response}}
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -201,7 +208,7 @@ defmodule Chainex.LLM.OpenAI do
       {"Content-Type", "application/json"},
       {"Authorization", "Bearer #{Keyword.fetch!(config, :api_key)}"}
     ]
-    
+
     case Keyword.get(config, :organization) do
       nil -> base_headers
       org -> [{"OpenAI-Organization", org} | base_headers]
@@ -210,14 +217,14 @@ defmodule Chainex.LLM.OpenAI do
 
   defp build_chat_body(messages, config) do
     formatted_messages = format_messages(messages)
-    
+
     base_body = %{
       "model" => Keyword.get(config, :model, @default_model),
       "messages" => formatted_messages,
       "temperature" => Keyword.get(config, :temperature, @default_temperature),
       "max_tokens" => Keyword.get(config, :max_tokens, @default_max_tokens)
     }
-    
+
     # Add optional parameters
     base_body
     |> maybe_add(:top_p, config)
@@ -235,7 +242,7 @@ defmodule Chainex.LLM.OpenAI do
         "role" => format_role(message.role),
         "content" => message.content
       }
-      
+
       case Map.get(message, :name) do
         nil -> base
         name -> Map.put(base, "name", name)
@@ -259,54 +266,61 @@ defmodule Chainex.LLM.OpenAI do
 
   defp http_request(method, url, headers, body, config) do
     timeout = Keyword.get(config, :timeout, @default_timeout)
-    
+
     request_opts = [
       receive_timeout: timeout,
       retry: false
     ]
-    
+
     json_body = Jason.encode!(body)
-    
+
     try do
-      case Req.request([method: method, url: url, headers: headers, body: json_body] ++ request_opts) do
-      {:ok, %Req.Response{status: status, body: response_body}} when status in 200..299 ->
-        decoded = 
-          case response_body do
-            body when is_binary(body) ->
-              case Jason.decode(body) do
-                {:ok, decoded} -> decoded
-                {:error, _} -> {:error, {:json_decode_error, body}}
-              end
-            body when is_map(body) -> body
+      case Req.request(
+             [method: method, url: url, headers: headers, body: json_body] ++ request_opts
+           ) do
+        {:ok, %Req.Response{status: status, body: response_body}} when status in 200..299 ->
+          decoded =
+            case response_body do
+              body when is_binary(body) ->
+                case Jason.decode(body) do
+                  {:ok, decoded} -> decoded
+                  {:error, _} -> {:error, {:json_decode_error, body}}
+                end
+
+              body when is_map(body) ->
+                body
+            end
+
+          case decoded do
+            {:error, _} = error -> error
+            decoded_body -> {:ok, decoded_body}
           end
-        
-        case decoded do
-          {:error, _} = error -> error
-          decoded_body -> {:ok, decoded_body}
-        end
-      
-      {:ok, %Req.Response{status: status, body: body}} ->
-        decoded = 
-          case body do
-            body when is_binary(body) ->
-              case Jason.decode(body) do
-                {:ok, decoded} -> decoded
-                {:error, _} -> body
-              end
-            body when is_map(body) -> body
+
+        {:ok, %Req.Response{status: status, body: body}} ->
+          decoded =
+            case body do
+              body when is_binary(body) ->
+                case Jason.decode(body) do
+                  {:ok, decoded} -> decoded
+                  {:error, _} -> body
+                end
+
+              body when is_map(body) ->
+                body
+            end
+
+          case decoded do
+            %{"error" => error} -> {:error, {:api_error, status, error}}
+            decoded_body -> {:error, {:api_error, status, decoded_body}}
           end
-        
-        case decoded do
-          %{"error" => error} -> {:error, {:api_error, status, error}}
-          decoded_body -> {:error, {:api_error, status, decoded_body}}
-        end
-      
-      {:error, reason} ->
-        {:error, {:http_error, reason}}
+
+        {:error, reason} ->
+          {:error, {:http_error, reason}}
       end
     catch
       :exit, reason ->
         {:error, {:http_error, reason}}
+
       error, reason ->
         case reason do
           %Jason.DecodeError{} -> {:error, {:json_decode_error, reason}}
@@ -318,13 +332,13 @@ defmodule Chainex.LLM.OpenAI do
   defp parse_chat_response(%{"choices" => [choice | _]} = response) do
     message = choice["message"]
     content = message["content"] || ""
-    
+
     usage = %{
       prompt_tokens: get_in(response, ["usage", "prompt_tokens"]) || 0,
       completion_tokens: get_in(response, ["usage", "completion_tokens"]) || 0,
       total_tokens: get_in(response, ["usage", "total_tokens"]) || 0
     }
-    
+
     response_data = %{
       content: content,
       model: response["model"],
@@ -332,7 +346,7 @@ defmodule Chainex.LLM.OpenAI do
       usage: usage,
       finish_reason: choice["finish_reason"]
     }
-    
+
     {:ok, response_data}
   end
 
@@ -360,8 +374,9 @@ defmodule Chainex.LLM.OpenAI do
           delta: parsed.content,
           done: true
         }
+
         {[{:ok, chunk}], {:done}}
-      
+
       {:error, reason} ->
         {[{:error, reason}], {:done}}
     end

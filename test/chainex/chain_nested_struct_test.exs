@@ -1,6 +1,6 @@
 defmodule Chainex.ChainNestedStructTest do
   use ExUnit.Case, async: true
-  
+
   alias Chainex.Chain
 
   # Define nested structs for testing
@@ -37,16 +37,17 @@ defmodule Chainex.ChainNestedStructTest do
           "postal_code": "94105"
         }
       })
-      
-      chain = Chain.new(json_string)
-      |> Chain.parse(:struct, Company)
-      
+
+      chain =
+        Chain.new(json_string)
+        |> Chain.parse(:struct, Company)
+
       assert {:ok, result} = Chain.run(chain)
       assert %Company{} = result
       assert result.name == "TechCorp"
       assert result.industry == "Technology"
       assert result.size == 500
-      
+
       # This should be automatically converted to an Address struct
       # based on field name matching (address -> Address)
       assert %Address{} = result.address
@@ -96,37 +97,38 @@ defmodule Chainex.ChainNestedStructTest do
           "version": 1
         }
       })
-      
-      chain = Chain.new(json_string)
-      |> Chain.parse(:struct, ComplexUser)
-      
+
+      chain =
+        Chain.new(json_string)
+        |> Chain.parse(:struct, ComplexUser)
+
       assert {:ok, result} = Chain.run(chain)
       assert %ComplexUser{} = result
       assert result.id == 12345
-      
+
       # personal_info should be converted to PersonalInfo struct
       assert %PersonalInfo{} = result.personal_info
       assert result.personal_info.first_name == "John"
       assert result.personal_info.last_name == "Doe"
       assert result.personal_info.date_of_birth == "1990-01-15"
-      
+
       # work_info should be converted to WorkInfo struct
       assert %WorkInfo{} = result.work_info
       assert result.work_info.position == "Software Engineer"
       assert result.work_info.salary == 95000
-      
+
       # Nested company in work_info should be converted to Company struct  
       assert %Company{} = result.work_info.company
       assert result.work_info.company.name == "Awesome Inc"
       assert result.work_info.company.industry == "Software"
-      
+
       # addresses should be a list of Address structs
       assert is_list(result.addresses)
       assert length(result.addresses) == 2
       assert %Address{} = hd(result.addresses)
       assert hd(result.addresses).street == "456 Home Ave"
       assert hd(result.addresses).city == "Austin"
-      
+
       # metadata should be empty map since no Metadata struct exists 
       assert result.metadata == %{}
     end
@@ -139,10 +141,11 @@ defmodule Chainex.ChainNestedStructTest do
           "some_field": "value"
         }
       })
-      
-      chain = Chain.new(json_string)
-      |> Chain.parse(:struct, ComplexUser)
-      
+
+      chain =
+        Chain.new(json_string)
+        |> Chain.parse(:struct, ComplexUser)
+
       assert {:ok, result} = Chain.run(chain)
       assert %ComplexUser{} = result
       assert result.id == 67890
@@ -158,13 +161,14 @@ defmodule Chainex.ChainNestedStructTest do
           {"street": "456 Oak Ave", "city": "Portland", "country": "USA"}
         ]
       })
-      
-      chain = Chain.new(json_string)
-      |> Chain.parse(:struct, ComplexUser)
-      
+
+      chain =
+        Chain.new(json_string)
+        |> Chain.parse(:struct, ComplexUser)
+
       assert {:ok, result} = Chain.run(chain)
       assert %ComplexUser{} = result
-      
+
       # addresses should be converted to list of Address structs
       assert is_list(result.addresses)
       assert length(result.addresses) == 2

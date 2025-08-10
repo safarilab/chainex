@@ -106,12 +106,13 @@ defmodule Chainex.Tools.TextProcessor do
     characters = String.length(text)
     words = text |> String.split(~r/\s+/, trim: true) |> length()
     lines = text |> String.split(~r/\r?\n/) |> length()
-    
-    {:ok, %{
-      characters: characters,
-      words: words,
-      lines: lines
-    }}
+
+    {:ok,
+     %{
+       characters: characters,
+       words: words,
+       lines: lines
+     }}
   end
 
   def count_text(%{text: text}) do
@@ -127,17 +128,21 @@ defmodule Chainex.Tools.TextProcessor do
   end
 
   def convert_case(%{text: text, case_type: "title"}) do
-    result = text 
-    |> String.split(~r/\s+/) 
-    |> Enum.map(&String.capitalize/1) 
-    |> Enum.join(" ")
+    result =
+      text
+      |> String.split(~r/\s+/)
+      |> Enum.map(&String.capitalize/1)
+      |> Enum.join(" ")
+
     {:ok, result}
   end
 
   def convert_case(%{text: text, case_type: "sentence"}) do
-    result = text
-    |> String.downcase()
-    |> String.replace(~r/^\w/, fn first_char -> String.upcase(first_char) end)
+    result =
+      text
+      |> String.downcase()
+      |> String.replace(~r/^\w/, fn first_char -> String.upcase(first_char) end)
+
     {:ok, result}
   end
 

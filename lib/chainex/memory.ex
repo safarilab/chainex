@@ -107,7 +107,7 @@ defmodule Chainex.Memory do
   def store(%__MODULE__{type: :buffer, storage: storage} = memory, key, value) do
     new_storage = Map.put(storage, key, value)
     updated_memory = %{memory | storage: new_storage}
-    
+
     updated_memory
     |> update_creation_stats(key)
     |> maybe_auto_prune()
@@ -125,7 +125,7 @@ defmodule Chainex.Memory do
 
     new_storage = [entry | storage]
     updated_memory = %{memory | storage: new_storage}
-    
+
     updated_memory
     |> update_creation_stats(key)
     |> maybe_auto_prune()
@@ -159,16 +159,17 @@ defmodule Chainex.Memory do
         updated_memory = %{memory | storage: new_storage}
 
         # Persist to file
-        final_memory = case persist_to_file(new_storage, options) do
-          :ok ->
-            updated_memory
+        final_memory =
+          case persist_to_file(new_storage, options) do
+            :ok ->
+              updated_memory
 
-          {:error, _reason} ->
-            # On file write error, still return updated memory (data exists in memory)
-            # This allows the system to continue working even if persistence fails
-            updated_memory
-        end
-        
+            {:error, _reason} ->
+              # On file write error, still return updated memory (data exists in memory)
+              # This allows the system to continue working even if persistence fails
+              updated_memory
+          end
+
         final_memory
         |> update_creation_stats(key)
         |> maybe_auto_prune()
@@ -367,35 +368,41 @@ defmodule Chainex.Memory do
         # For database backend, clear the actual database
         case clear_database(options) do
           :ok -> :ok
-          {:error, _reason} -> :ok  # Continue even if clear fails
+          # Continue even if clear fails
+          {:error, _reason} -> :ok
         end
-        
+
         # Reset access stats and keep existing storage structure
-        %{memory | 
-          access_stats: %{
-            access_count: %{},
-            last_access: %{},
-            creation_time: %{}
-          }
+        %{
+          memory
+          | access_stats: %{
+              access_count: %{},
+              last_access: %{},
+              creation_time: %{}
+            }
         }
-        
+
       {:persistent, :file} ->
         # For file backend, remove the file and reinitialize
         if Map.has_key?(options, :path) do
           File.rm(options.path)
         end
+
         new_storage = initialize_storage(type, options)
         %{memory | storage: new_storage}
-        
+
       _ ->
         # For buffer, conversation, and vector types
         new_storage = initialize_storage(type, options)
-        %{memory | storage: new_storage, 
-          access_stats: %{
-            access_count: %{},
-            last_access: %{},
-            creation_time: %{}
-          }
+
+        %{
+          memory
+          | storage: new_storage,
+            access_stats: %{
+              access_count: %{},
+              last_access: %{},
+              creation_time: %{}
+            }
         }
     end
   end
@@ -443,16 +450,17 @@ defmodule Chainex.Memory do
         updated_memory = %{memory | storage: new_storage}
 
         # Update persistent file
-        final_memory = case persist_to_file(new_storage, options) do
-          :ok ->
-            updated_memory
+        final_memory =
+          case persist_to_file(new_storage, options) do
+            :ok ->
+              updated_memory
 
-          {:error, _reason} ->
-            # On file write error, still return updated memory (data deleted from memory)
-            # This allows the system to continue working even if persistence fails
-            updated_memory
-        end
-        
+            {:error, _reason} ->
+              # On file write error, still return updated memory (data deleted from memory)
+              # This allows the system to continue working even if persistence fails
+              updated_memory
+          end
+
         clean_access_stats(final_memory, key)
     end
   end
@@ -534,12 +542,12 @@ defmodule Chainex.Memory do
   @spec get_and_track(t(), any()) :: {t(), {:ok, any()} | {:error, atom()}}
   def get_and_track(memory, key) do
     result = retrieve(memory, key)
-    
+
     case result do
       {:ok, _value} ->
         updated_memory = update_access_stats(memory, key)
         {updated_memory, result}
-      
+
       {:error, _reason} ->
         {memory, result}
     end
@@ -556,7 +564,7 @@ defmodule Chainex.Memory do
         # For database backend, storage is not used - operations go directly to DB
         # We'll store an empty map but use the database for actual storage
         %{}
-        
+
       :file ->
         # Try to load existing data from file, fallback to empty map
         case load_from_file(options) do
@@ -655,30 +663,31 @@ defmodule Chainex.Memory do
 
   defp update_creation_stats(%__MODULE__{access_stats: stats} = memory, key) do
     current_time = :os.system_time(:second)
-    
+
     updated_stats = %{
       stats
       | creation_time: Map.put(stats.creation_time, key, current_time),
         access_count: Map.put_new(stats.access_count, key, 0)
     }
-    
+
     %{memory | access_stats: updated_stats}
   end
 
   defp update_access_stats(%__MODULE__{access_stats: stats} = memory, key) do
     current_time = :os.system_time(:second)
     current_count = Map.get(stats.access_count, key, 0)
-    
+
     updated_stats = %{
       stats
       | access_count: Map.put(stats.access_count, key, current_count + 1),
         last_access: Map.put(stats.last_access, key, current_time)
     }
-    
+
     %{memory | access_stats: updated_stats}
   end
 
   defp maybe_auto_prune(%__MODULE__{pruning_config: %{auto_prune: false}} = memory), do: memory
+
   defp maybe_auto_prune(%__MODULE__{pruning_config: %{auto_prune: true}} = memory) do
     case should_prune?(memory) do
       true -> do_prune(memory, memory.pruning_config.prune_strategy)
@@ -687,6 +696,7 @@ defmodule Chainex.Memory do
   end
 
   defp should_prune?(%__MODULE__{pruning_config: %{max_size: :unlimited}}), do: false
+
   defp should_prune?(%__MODULE__{pruning_config: %{max_size: max_size}} = memory) do
     size(memory) > max_size
   end
@@ -703,37 +713,37 @@ defmodule Chainex.Memory do
   defp prune_lru(%__MODULE__{pruning_config: %{prune_percentage: percentage}} = memory) do
     current_size = size(memory)
     target_removals = max(1, trunc(current_size * percentage))
-    
+
     # Get keys sorted by last access time (oldest first)
     # Use creation time as fallback for items never accessed
     all_keys = keys(memory)
-    
-    keys_to_remove = 
+
+    keys_to_remove =
       all_keys
       |> Enum.sort_by(fn key ->
         # Use last_access if available, otherwise creation_time
         Map.get(memory.access_stats.last_access, key) ||
-        Map.get(memory.access_stats.creation_time, key, 0)
+          Map.get(memory.access_stats.creation_time, key, 0)
       end)
       |> Enum.take(target_removals)
-    
+
     remove_keys(memory, keys_to_remove)
   end
 
   defp prune_lfu(%__MODULE__{pruning_config: %{prune_percentage: percentage}} = memory) do
     current_size = size(memory)
     target_removals = max(1, trunc(current_size * percentage))
-    
+
     # Get all keys and sort by access count (least used first)
     all_keys = keys(memory)
-    
-    keys_to_remove = 
+
+    keys_to_remove =
       all_keys
       |> Enum.sort_by(fn key ->
         Map.get(memory.access_stats.access_count, key, 0)
       end)
       |> Enum.take(target_removals)
-    
+
     remove_keys(memory, keys_to_remove)
   end
 
@@ -753,7 +763,7 @@ defmodule Chainex.Memory do
 
   defp find_expired_keys(memory, current_time, ttl_seconds) do
     cutoff_time = current_time - ttl_seconds
-    
+
     memory.access_stats.creation_time
     |> Enum.filter(fn {_key, creation_time} -> creation_time < cutoff_time end)
     |> Enum.map(fn {key, _time} -> key end)
@@ -772,7 +782,7 @@ defmodule Chainex.Memory do
         last_access: Map.delete(stats.last_access, key),
         creation_time: Map.delete(stats.creation_time, key)
     }
-    
+
     %{memory | access_stats: updated_stats}
   end
 
@@ -782,7 +792,7 @@ defmodule Chainex.Memory do
     case validate_database_config(options) do
       {:ok, config} ->
         Chainex.Memory.Database.store(config, key, value)
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -792,7 +802,7 @@ defmodule Chainex.Memory do
     case validate_database_config(options) do
       {:ok, config} ->
         Chainex.Memory.Database.retrieve(config, key)
-      
+
       {:error, _reason} ->
         {:error, :not_found}
     end
@@ -802,7 +812,7 @@ defmodule Chainex.Memory do
     case validate_database_config(options) do
       {:ok, config} ->
         Chainex.Memory.Database.keys(config)
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -812,7 +822,7 @@ defmodule Chainex.Memory do
     case validate_database_config(options) do
       {:ok, config} ->
         Chainex.Memory.Database.size(config)
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -822,7 +832,7 @@ defmodule Chainex.Memory do
     case validate_database_config(options) do
       {:ok, config} ->
         Chainex.Memory.Database.delete(config, key)
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -832,7 +842,7 @@ defmodule Chainex.Memory do
     case validate_database_config(options) do
       {:ok, config} ->
         Chainex.Memory.Database.clear(config)
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -842,7 +852,7 @@ defmodule Chainex.Memory do
     case Map.get(options, :database) || options do
       config when is_map(config) ->
         Chainex.Memory.Database.validate_config(config)
-      
+
       _ ->
         {:error, :invalid_database_config}
     end

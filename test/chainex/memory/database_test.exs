@@ -75,29 +75,37 @@ defmodule Chainex.Memory.DatabaseTest do
     test "updates access statistics", %{config: config} do
       # Store a key first
       assert :ok = Database.store(config, :access_key, "value")
-      
+
       # Update access
       assert :ok = Database.update_access(config, :access_key)
-      
+
       # Verify access count increased
-      {:ok, %{rows: [[_key, _created_at, access_count, _last_access]]}} = 
-        Ecto.Adapters.SQL.query(config.repo, "SELECT key, created_at, access_count, last_access FROM #{config.table} WHERE key = ?", ["a:access_key"])
-      
+      {:ok, %{rows: [[_key, _created_at, access_count, _last_access]]}} =
+        Ecto.Adapters.SQL.query(
+          config.repo,
+          "SELECT key, created_at, access_count, last_access FROM #{config.table} WHERE key = ?",
+          ["a:access_key"]
+        )
+
       assert access_count == 1
     end
 
     test "handles multiple access updates", %{config: config} do
       assert :ok = Database.store(config, :multi_access, "value")
-      
+
       # Update access multiple times
       assert :ok = Database.update_access(config, :multi_access)
       assert :ok = Database.update_access(config, :multi_access)
       assert :ok = Database.update_access(config, :multi_access)
-      
+
       # Verify final count
-      {:ok, %{rows: [[_key, _created_at, access_count, _last_access]]}} = 
-        Ecto.Adapters.SQL.query(config.repo, "SELECT key, created_at, access_count, last_access FROM #{config.table} WHERE key = ?", ["a:multi_access"])
-      
+      {:ok, %{rows: [[_key, _created_at, access_count, _last_access]]}} =
+        Ecto.Adapters.SQL.query(
+          config.repo,
+          "SELECT key, created_at, access_count, last_access FROM #{config.table} WHERE key = ?",
+          ["a:multi_access"]
+        )
+
       assert access_count == 3
     end
   end
@@ -106,7 +114,7 @@ defmodule Chainex.Memory.DatabaseTest do
     test "deletes existing keys", %{config: config} do
       assert :ok = Database.store(config, :delete_me, "temporary")
       assert {:ok, "temporary"} = Database.retrieve(config, :delete_me)
-      
+
       assert :ok = Database.delete(config, :delete_me)
       assert {:error, :not_found} = Database.retrieve(config, :delete_me)
     end
@@ -120,12 +128,12 @@ defmodule Chainex.Memory.DatabaseTest do
     test "lists all keys", %{config: config} do
       # Empty initially
       assert {:ok, []} = Database.keys(config)
-      
+
       # Add some keys
       assert :ok = Database.store(config, :key1, "value1")
       assert :ok = Database.store(config, :key2, "value2")
       assert :ok = Database.store(config, "string_key", "value3")
-      
+
       # Get keys
       assert {:ok, keys} = Database.keys(config)
       assert length(keys) == 3
@@ -137,14 +145,14 @@ defmodule Chainex.Memory.DatabaseTest do
     test "returns correct size", %{config: config} do
       # Empty initially
       assert {:ok, 0} = Database.size(config)
-      
+
       # Add keys and check size
       assert :ok = Database.store(config, :size1, "value")
       assert {:ok, 1} = Database.size(config)
-      
+
       assert :ok = Database.store(config, :size2, "value")
       assert {:ok, 2} = Database.size(config)
-      
+
       # Delete and check size
       assert :ok = Database.delete(config, :size1)
       assert {:ok, 1} = Database.size(config)
@@ -157,7 +165,7 @@ defmodule Chainex.Memory.DatabaseTest do
       assert :ok = Database.store(config, :clear1, "value1")
       assert :ok = Database.store(config, :clear2, "value2")
       assert {:ok, 2} = Database.size(config)
-      
+
       # Clear all
       assert :ok = Database.clear(config)
       assert {:ok, 0} = Database.size(config)
@@ -170,21 +178,21 @@ defmodule Chainex.Memory.DatabaseTest do
       # Store some keys
       assert :ok = Database.store(config, :stats1, "value1")
       assert :ok = Database.store(config, :stats2, "value2")
-      
+
       # Update access for one key
       assert :ok = Database.update_access(config, :stats1)
       assert :ok = Database.update_access(config, :stats1)
-      
+
       # Get stats
       assert {:ok, stats} = Database.get_access_stats(config)
-      
+
       assert is_map(stats.access_count)
       assert is_map(stats.last_access)
       assert is_map(stats.creation_time)
-      
+
       assert stats.access_count[:stats1] == 2
       assert stats.access_count[:stats2] == 0
-      
+
       assert Map.has_key?(stats.creation_time, :stats1)
       assert Map.has_key?(stats.creation_time, :stats2)
     end
@@ -196,19 +204,19 @@ defmodule Chainex.Memory.DatabaseTest do
       assert :ok = Database.store(config, :frequent, "value1")
       assert :ok = Database.store(config, :rare, "value2")
       assert :ok = Database.store(config, :medium, "value3")
-      
+
       # Access keys differently
       assert :ok = Database.update_access(config, :frequent)
       assert :ok = Database.update_access(config, :frequent)
       assert :ok = Database.update_access(config, :frequent)
-      
+
       assert :ok = Database.update_access(config, :medium)
-      
+
       # :rare not accessed (count = 0)
-      
+
       # Get least frequently used (should return :rare first)
       assert {:ok, keys} = Database.find_keys_for_pruning(config, :lfu, 2)
-      
+
       assert length(keys) == 2
       assert :rare in keys
       assert :medium in keys
@@ -217,37 +225,43 @@ defmodule Chainex.Memory.DatabaseTest do
 
     test "finds keys for LRU pruning", %{config: config} do
       # Store keys
-      assert :ok = Database.store(config, :old, "value1") 
+      assert :ok = Database.store(config, :old, "value1")
       assert :ok = Database.store(config, :new, "value2")
-      
+
       # Access :new more recently
-      :timer.sleep(1) # Ensure different timestamps
+      # Ensure different timestamps
+      :timer.sleep(1)
       assert :ok = Database.update_access(config, :new)
-      
+
       # Get least recently used
       assert {:ok, keys} = Database.find_keys_for_pruning(config, :lru, 1)
-      
+
       assert length(keys) == 1
       assert :old in keys
     end
 
     test "finds keys for TTL pruning", %{config: config} do
       current_time = :os.system_time(:second)
-      
+
       # Store key
       assert :ok = Database.store(config, :ttl_key, "value")
-      
+
       # Simulate old creation time by updating database directly
-      Ecto.Adapters.SQL.query!(config.repo, """
-        UPDATE #{config.table} 
-        SET created_at = ? 
-        WHERE key = ?
-      """, [current_time - 3600, "a:ttl_key"]) # 1 hour ago
-      
+      Ecto.Adapters.SQL.query!(
+        config.repo,
+        """
+          UPDATE #{config.table} 
+          SET created_at = ? 
+          WHERE key = ?
+        """,
+        # 1 hour ago
+        [current_time - 3600, "a:ttl_key"]
+      )
+
       # Find expired keys (cutoff = 30 minutes ago)
       cutoff = current_time - 1800
       assert {:ok, keys} = Database.find_keys_for_pruning(config, :ttl, 10, cutoff)
-      
+
       assert :ttl_key in keys
     end
   end

@@ -71,21 +71,21 @@ defmodule Chainex.Memory.Migration do
   """
   @spec create_memory_table() :: :ok
   def create_memory_table, do: create_memory_table(@default_table, [])
-  
+
   @spec create_memory_table(String.t()) :: :ok
   def create_memory_table(table) when is_binary(table), do: create_memory_table(table, [])
-  
+
   @spec create_memory_table(String.t(), keyword()) :: :ok
   def create_memory_table(table, opts) when is_binary(table) and is_list(opts) do
     create_indexes = Keyword.get(opts, :create_indexes, true)
 
     create table(table, primary_key: false) do
-      add :key, :text, primary_key: true
-      add :value, :binary, null: false
-      add :access_count, :integer, null: false, default: 0
-      add :created_at, :bigint, null: false
-      add :updated_at, :bigint, null: false
-      add :last_access, :bigint, null: false
+      add(:key, :text, primary_key: true)
+      add(:value, :binary, null: false)
+      add(:access_count, :integer, null: false, default: 0)
+      add(:created_at, :bigint, null: false)
+      add(:updated_at, :bigint, null: false)
+      add(:last_access, :bigint, null: false)
     end
 
     if create_indexes do
@@ -105,10 +105,10 @@ defmodule Chainex.Memory.Migration do
   """
   @spec drop_memory_table() :: :ok
   def drop_memory_table, do: drop_memory_table(@default_table)
-  
+
   @spec drop_memory_table(String.t()) :: :ok
   def drop_memory_table(table) when is_binary(table) do
-    drop table(table)
+    drop(table(table))
     :ok
   end
 
@@ -127,9 +127,9 @@ defmodule Chainex.Memory.Migration do
   """
   @spec create_memory_indexes(String.t()) :: :ok
   def create_memory_indexes(table \\ @default_table) do
-    create index(table, [:access_count], name: "#{table}_access_count_index")
-    create index(table, [:last_access], name: "#{table}_last_access_index")
-    create index(table, [:created_at], name: "#{table}_created_at_index")
+    create(index(table, [:access_count], name: "#{table}_access_count_index"))
+    create(index(table, [:last_access], name: "#{table}_last_access_index"))
+    create(index(table, [:created_at], name: "#{table}_created_at_index"))
     :ok
   end
 
@@ -143,9 +143,9 @@ defmodule Chainex.Memory.Migration do
   """
   @spec drop_memory_indexes(String.t()) :: :ok
   def drop_memory_indexes(table \\ @default_table) do
-    drop index(table, [:access_count], name: "#{table}_access_count_index")
-    drop index(table, [:last_access], name: "#{table}_last_access_index")
-    drop index(table, [:created_at], name: "#{table}_created_at_index")
+    drop(index(table, [:access_count], name: "#{table}_access_count_index"))
+    drop(index(table, [:last_access], name: "#{table}_last_access_index"))
+    drop(index(table, [:created_at], name: "#{table}_created_at_index"))
     :ok
   end
 
@@ -192,10 +192,10 @@ defmodule Chainex.Memory.Migration do
   def upgrade_memory_table(table \\ @default_table) do
     # Check if columns exist and add them if missing
     # This is a no-op for now but can be extended for future schema changes
-    
+
     # Ensure indexes exist
     create_memory_indexes(table)
-    
+
     :ok
   end
 end

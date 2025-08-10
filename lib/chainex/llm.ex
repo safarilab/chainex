@@ -55,53 +55,57 @@ defmodule Chainex.LLM do
 
   @type provider :: :openai | :anthropic | :ollama | :mock
   @type role :: :system | :user | :assistant | :tool
-  @type message :: %{role: role(), content: String.t()} | %{role: role(), content: String.t(), name: String.t()}
+  @type message ::
+          %{role: role(), content: String.t()}
+          | %{role: role(), content: String.t(), name: String.t()}
   @type messages :: [message()]
   @type model :: String.t()
   @type config :: keyword()
-  
-  @type completion_options :: [
-    provider: provider(),
-    model: model(),
-    temperature: float(),
-    max_tokens: pos_integer(),
-    top_p: float(),
-    frequency_penalty: float(),
-    presence_penalty: float(),
-    stop: String.t() | [String.t()],
-    stream: boolean(),
-    tools: [map()],
-    tool_choice: String.t() | map()
-  ]
 
-  @type response :: %{
-    content: String.t(),
-    model: String.t(),
-    provider: provider(),
-    usage: %{
-      prompt_tokens: pos_integer(),
-      completion_tokens: pos_integer(),
-      total_tokens: pos_integer()
-    },
-    finish_reason: String.t()
-  } | %{
-    content: String.t(),
-    model: String.t(),
-    provider: provider(),
-    usage: %{
-      prompt_tokens: pos_integer(),
-      completion_tokens: pos_integer(),
-      total_tokens: pos_integer()
-    },
-    finish_reason: String.t(),
-    tool_calls: [map()]
-  }
+  @type completion_options :: [
+          provider: provider(),
+          model: model(),
+          temperature: float(),
+          max_tokens: pos_integer(),
+          top_p: float(),
+          frequency_penalty: float(),
+          presence_penalty: float(),
+          stop: String.t() | [String.t()],
+          stream: boolean(),
+          tools: [map()],
+          tool_choice: String.t() | map()
+        ]
+
+  @type response ::
+          %{
+            content: String.t(),
+            model: String.t(),
+            provider: provider(),
+            usage: %{
+              prompt_tokens: pos_integer(),
+              completion_tokens: pos_integer(),
+              total_tokens: pos_integer()
+            },
+            finish_reason: String.t()
+          }
+          | %{
+              content: String.t(),
+              model: String.t(),
+              provider: provider(),
+              usage: %{
+                prompt_tokens: pos_integer(),
+                completion_tokens: pos_integer(),
+                total_tokens: pos_integer()
+              },
+              finish_reason: String.t(),
+              tool_calls: [map()]
+            }
 
   @type streaming_chunk :: %{
-    content: String.t(),
-    delta: String.t(),
-    done: boolean()
-  }
+          content: String.t(),
+          delta: String.t(),
+          done: boolean()
+        }
 
   @providers %{
     openai: OpenAI,
@@ -143,7 +147,7 @@ defmodule Chainex.LLM do
   def chat(messages, opts \\ []) when is_list(messages) do
     {provider, config} = resolve_provider_and_config(opts)
     provider_module = Map.get(@providers, provider)
-    
+
     if provider_module do
       provider_module.chat(messages, config)
     else
@@ -175,7 +179,7 @@ defmodule Chainex.LLM do
   def stream_chat(messages, opts \\ []) when is_list(messages) do
     {provider, config} = resolve_provider_and_config(Keyword.put(opts, :stream, true))
     provider_module = Map.get(@providers, provider)
-    
+
     if provider_module do
       provider_module.stream_chat(messages, config)
     else
@@ -196,17 +200,17 @@ defmodule Chainex.LLM do
       ...>   context
       ...> )
   """
-  @spec complete_with_context(String.t(), Context.t(), completion_options()) :: 
-    {:ok, response(), Context.t()} | {:error, any()}
+  @spec complete_with_context(String.t(), Context.t(), completion_options()) ::
+          {:ok, response(), Context.t()} | {:error, any()}
   def complete_with_context(prompt, context, opts \\ []) do
     # Build messages from memory if available
     messages = build_messages_from_context(prompt, context)
-    
+
     case chat(messages, opts) do
       {:ok, response} ->
         updated_context = update_context_with_response(context, prompt, response)
         {:ok, response, updated_context}
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -226,7 +230,8 @@ defmodule Chainex.LLM do
       iex> LLM.count_tokens(messages, provider: :openai, model: "gpt-4o")
       {:ok, 8}
   """
-  @spec count_tokens(String.t() | messages(), completion_options()) :: {:ok, pos_integer()} | {:error, any()}
+  @spec count_tokens(String.t() | messages(), completion_options()) ::
+          {:ok, pos_integer()} | {:error, any()}
   def count_tokens(input, opts \\ [])
 
   def count_tokens(text, opts) when is_binary(text) do
@@ -236,17 +241,18 @@ defmodule Chainex.LLM do
   def count_tokens(messages, opts) when is_list(messages) do
     {provider, config} = resolve_provider_and_config(opts)
     provider_module = Map.get(@providers, provider)
-    
+
     if provider_module && function_exported?(provider_module, :count_tokens, 2) do
       provider_module.count_tokens(messages, config)
     else
       # Fallback to rough estimation (4 chars ≈ 1 token)
-      total_chars = 
+      total_chars =
         messages
         |> Enum.map(fn %{content: content} -> String.length(content) end)
         |> Enum.sum()
-      
-      {:ok, div(total_chars, 4) + length(messages) * 3} # +3 for role overhead per message
+
+      # +3 for role overhead per message
+      {:ok, div(total_chars, 4) + length(messages) * 3}
     end
   end
 
@@ -261,7 +267,7 @@ defmodule Chainex.LLM do
   @spec models(provider()) :: {:ok, [String.t()]} | {:error, any()}
   def models(provider) do
     provider_module = Map.get(@providers, provider)
-    
+
     if provider_module && function_exported?(provider_module, :models, 1) do
       config = get_provider_config(provider)
       provider_module.models(config)
@@ -277,7 +283,7 @@ defmodule Chainex.LLM do
     base_config = get_provider_config(provider)
     request_config = Keyword.drop(opts, [:provider])
     config = Keyword.merge(base_config, request_config)
-    
+
     {provider, config}
   end
 
@@ -302,25 +308,27 @@ defmodule Chainex.LLM do
 
   defp build_messages_from_context(prompt, context) do
     base_messages = []
-    
+
     # Add system message if any metadata provides it
-    base_messages = 
+    base_messages =
       case Map.get(context.metadata, :system_prompt) do
         nil -> base_messages
         system_prompt -> [%{role: :system, content: system_prompt} | base_messages]
       end
-    
+
     # Add conversation history from memory if available
-    base_messages = 
+    base_messages =
       case context.memory do
-        nil -> base_messages
-        memory -> 
+        nil ->
+          base_messages
+
+        memory ->
           case get_conversation_history(memory, context.session_id) do
             [] -> base_messages
             history -> base_messages ++ history
           end
       end
-    
+
     # Add current prompt
     base_messages ++ [%{role: :user, content: prompt}]
   end
@@ -335,38 +343,40 @@ defmodule Chainex.LLM do
 
   defp update_context_with_response(context, prompt, response) do
     # Store the conversation turn in memory if available
-    updated_context = 
+    updated_context =
       case context.memory do
-        nil -> context
+        nil ->
+          context
+
         memory ->
           history_key = "conversation:#{context.session_id}"
-          
+
           # Get existing history
-          existing_history = 
+          existing_history =
             case Memory.retrieve(memory, history_key) do
               {:ok, history} when is_list(history) -> history
               _ -> []
             end
-          
+
           # Add new turn
           new_turn = [
             %{role: :user, content: prompt},
             %{role: :assistant, content: response.content}
           ]
-          
+
           updated_history = existing_history ++ new_turn
           updated_memory = Memory.store(memory, history_key, updated_history)
-          
+
           %{context | memory: updated_memory}
       end
-    
+
     # Update metadata with response info
-    updated_metadata = 
+    updated_metadata =
       context.metadata
       |> Map.put(:last_model, response.model)
       |> Map.put(:last_provider, response.provider)
       |> Map.put(:last_usage, response.usage)
-    
+
     %{updated_context | metadata: updated_metadata}
   end
 end

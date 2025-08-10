@@ -17,7 +17,8 @@ defmodule Chainex.MixProject do
 
       # Docs
       name: "Chainex",
-      description: "A powerful Elixir library for building LLM chains - the Elixir equivalent of LangChain",
+      description:
+        "A powerful Elixir library for building LLM chains - the Elixir equivalent of LangChain",
       source_url: "https://github.com/your-org/chainex",
       homepage_url: "https://github.com/your-org/chainex",
       docs: [
@@ -26,22 +27,22 @@ defmodule Chainex.MixProject do
           "README.md",
           "CHANGELOG.md",
           "guides/getting_started.md",
-          "guides/memory_guide.md", 
+          "guides/memory_guide.md",
           "guides/tools_guide.md",
           "guides/parsing_guide.md",
           "guides/error_handling_guide.md"
         ],
         groups_for_extras: [
-          "Guides": [
+          Guides: [
             "guides/getting_started.md",
             "guides/memory_guide.md",
-            "guides/tools_guide.md", 
+            "guides/tools_guide.md",
             "guides/parsing_guide.md",
             "guides/error_handling_guide.md"
           ]
         ],
         groups_for_modules: [
-          "Core": [
+          Core: [
             Chainex.Chain
           ],
           "LLM Providers": [
@@ -50,23 +51,30 @@ defmodule Chainex.MixProject do
             Chainex.LLM.OpenAI,
             Chainex.LLM.Mock
           ],
-          "Memory": [
+          Memory: [
             Chainex.Memory,
             Chainex.Memory.Database
           ],
-          "Tools": [
+          Tools: [
             Chainex.Tool
           ],
-          "Utilities": [
+          Utilities: [
             Chainex.Chain.Executor,
             Chainex.Chain.VariableResolver
           ]
         ]
       ],
       package: [
-        description: "A powerful Elixir library for building LLM chains",
+        name: "chainex",
+        description:
+          "A powerful Elixir library for building LLM chains - the Elixir equivalent of LangChain",
         licenses: ["MIT"],
-        links: %{"GitHub" => "https://github.com/your-org/chainex"}
+        links: %{
+          "GitHub" => "https://github.com/your-org/chainex",
+          "Documentation" => "https://hexdocs.pm/chainex"
+        },
+        maintainers: ["Your Name"],
+        files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md)
       ]
     ]
   end
@@ -86,7 +94,11 @@ defmodule Chainex.MixProject do
   defp aliases do
     [
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test --exclude integration"],
-      "test.integration": ["ecto.create --quiet", "ecto.migrate --quiet", "test --only integration"],
+      "test.integration": [
+        "ecto.create --quiet",
+        "ecto.migrate --quiet",
+        "test --only integration"
+      ],
       "test.all": ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
     ]
   end

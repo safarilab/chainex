@@ -40,18 +40,18 @@ defmodule Chainex.LLM.Ollama do
   @default_keep_alive "5m"
 
   @type config :: [
-    model: String.t(),
-    base_url: String.t(),
-    timeout: pos_integer(),
-    temperature: float(),
-    top_p: float(),
-    top_k: pos_integer(),
-    repeat_penalty: float(),
-    seed: pos_integer(),
-    num_predict: pos_integer(),
-    keep_alive: String.t(),
-    system: String.t() | nil
-  ]
+          model: String.t(),
+          base_url: String.t(),
+          timeout: pos_integer(),
+          temperature: float(),
+          top_p: float(),
+          top_k: pos_integer(),
+          repeat_penalty: float(),
+          seed: pos_integer(),
+          num_predict: pos_integer(),
+          keep_alive: String.t(),
+          system: String.t() | nil
+        ]
 
   @doc """
   Send a chat completion request to Ollama
@@ -71,7 +71,7 @@ defmodule Chainex.LLM.Ollama do
 
   @doc """
   Count tokens for the given messages
-  
+
   Uses a rough estimation since Ollama doesn't expose tokenization:
   - ~4 characters per token (varies by model)
   - Additional tokens for message formatting
@@ -79,15 +79,16 @@ defmodule Chainex.LLM.Ollama do
   @spec count_tokens(list(), config()) :: {:ok, pos_integer()} | {:error, any()}
   def count_tokens(messages, _config) do
     # Very rough estimation for local models
-    total_tokens = 
+    total_tokens =
       messages
       |> Enum.reduce(0, fn message, acc ->
         content_length = String.length(message.content)
         # Rough estimation: 4 chars ≈ 1 token (varies by model/tokenizer)
         content_tokens = div(content_length, 4) + 1
-        acc + content_tokens + 2  # +2 for role formatting
+        # +2 for role formatting
+        acc + content_tokens + 2
       end)
-    
+
     {:ok, total_tokens}
   end
 
@@ -97,20 +98,20 @@ defmodule Chainex.LLM.Ollama do
   @spec models(config()) :: {:ok, [String.t()]} | {:error, any()}
   def models(config) do
     url = build_url(config, "/api/tags")
-    
+
     case http_request(:get, url, [], nil, config) do
       {:ok, %{"models" => models}} when is_list(models) ->
-        model_names = 
+        model_names =
           models
           |> Enum.map(fn model -> model["name"] end)
           |> Enum.filter(fn name -> name != nil end)
           |> Enum.sort()
-        
+
         {:ok, model_names}
-      
+
       {:ok, response} ->
         {:error, {:unexpected_response, response}}
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -122,7 +123,7 @@ defmodule Chainex.LLM.Ollama do
   @spec ping(config()) :: :ok | {:error, any()}
   def ping(config) do
     url = build_url(config, "/api/tags")
-    
+
     case http_request(:get, url, [], nil, Keyword.put(config, :timeout, 5000)) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
@@ -136,7 +137,7 @@ defmodule Chainex.LLM.Ollama do
   def pull_model(model_name, config) do
     url = build_url(config, "/api/pull")
     body = %{"name" => model_name}
-    
+
     case http_request(:post, url, [], body, Keyword.put(config, :timeout, 300_000)) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
@@ -148,11 +149,11 @@ defmodule Chainex.LLM.Ollama do
   defp do_chat_request(messages, config) do
     url = build_url(config, "/api/chat")
     body = build_chat_body(messages, config)
-    
+
     case http_request(:post, url, [], body, config) do
       {:ok, response} ->
         parse_chat_response(response)
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -161,7 +162,7 @@ defmodule Chainex.LLM.Ollama do
   defp do_stream_request(messages, config) do
     url = build_url(config, "/api/chat")
     body = build_chat_body(messages, Keyword.put(config, :stream, true))
-    
+
     Stream.resource(
       fn -> start_stream(url, body, config) end,
       fn connection -> read_stream_chunk(connection) end,
@@ -177,23 +178,24 @@ defmodule Chainex.LLM.Ollama do
   defp build_chat_body(messages, config) do
     {system_message, chat_messages} = extract_system_message(messages)
     formatted_messages = format_messages(chat_messages)
-    
+
     base_body = %{
       "model" => Keyword.get(config, :model, @default_model),
       "messages" => formatted_messages,
       "stream" => Keyword.get(config, :stream, false),
       "keep_alive" => Keyword.get(config, :keep_alive, @default_keep_alive)
     }
-    
+
     # Add system message if present
-    base_body = 
+    base_body =
       case system_message do
         nil -> base_body
         system -> Map.put(base_body, "system", system)
       end
-    
+
     # Build options
     options = build_options(config)
+
     if map_size(options) > 0 do
       Map.put(base_body, "options", options)
     else
@@ -205,7 +207,7 @@ defmodule Chainex.LLM.Ollama do
     case Enum.find(messages, fn msg -> msg.role == :system end) do
       nil ->
         {nil, messages}
-      
+
       system_msg ->
         chat_messages = Enum.reject(messages, fn msg -> msg.role == :system end)
         {system_msg.content, chat_messages}
@@ -214,7 +216,8 @@ defmodule Chainex.LLM.Ollama do
 
   defp format_messages(messages) do
     messages
-    |> Enum.reject(fn msg -> msg.role == :system end)  # System handled separately
+    # System handled separately
+    |> Enum.reject(fn msg -> msg.role == :system end)
     |> Enum.map(fn message ->
       %{
         "role" => format_role(message.role),
@@ -247,57 +250,64 @@ defmodule Chainex.LLM.Ollama do
 
   defp http_request(method, url, headers, body, config) do
     timeout = Keyword.get(config, :timeout, @default_timeout)
-    
+
     request_opts = [
       receive_timeout: timeout,
       retry: false
     ]
-    
+
     base_headers = [{"Content-Type", "application/json"}]
     all_headers = base_headers ++ headers
-    
+
     json_body = if body, do: Jason.encode!(body), else: nil
-    
+
     try do
-      case Req.request([method: method, url: url, headers: all_headers, body: json_body] ++ request_opts) do
-      {:ok, %Req.Response{status: status, body: response_body}} when status in 200..299 ->
-        decoded = 
-          case response_body do
-            body when is_binary(body) ->
-              case Jason.decode(body) do
-                {:ok, decoded} -> decoded
-                {:error, _} -> {:error, {:json_decode_error, body}}
-              end
-            body when is_map(body) -> body
+      case Req.request(
+             [method: method, url: url, headers: all_headers, body: json_body] ++ request_opts
+           ) do
+        {:ok, %Req.Response{status: status, body: response_body}} when status in 200..299 ->
+          decoded =
+            case response_body do
+              body when is_binary(body) ->
+                case Jason.decode(body) do
+                  {:ok, decoded} -> decoded
+                  {:error, _} -> {:error, {:json_decode_error, body}}
+                end
+
+              body when is_map(body) ->
+                body
+            end
+
+          case decoded do
+            {:error, _} = error -> error
+            decoded_body -> {:ok, decoded_body}
           end
-        
-        case decoded do
-          {:error, _} = error -> error
-          decoded_body -> {:ok, decoded_body}
-        end
-      
-      {:ok, %Req.Response{status: status, body: body}} ->
-        decoded = 
-          case body do
-            body when is_binary(body) ->
-              case Jason.decode(body) do
-                {:ok, decoded} -> decoded
-                {:error, _} -> body
-              end
-            body when is_map(body) -> body
+
+        {:ok, %Req.Response{status: status, body: body}} ->
+          decoded =
+            case body do
+              body when is_binary(body) ->
+                case Jason.decode(body) do
+                  {:ok, decoded} -> decoded
+                  {:error, _} -> body
+                end
+
+              body when is_map(body) ->
+                body
+            end
+
+          case decoded do
+            %{"error" => error} -> {:error, {:api_error, status, error}}
+            decoded_body -> {:error, {:api_error, status, decoded_body}}
           end
-        
-        case decoded do
-          %{"error" => error} -> {:error, {:api_error, status, error}}
-          decoded_body -> {:error, {:api_error, status, decoded_body}}
-        end
-      
-      {:error, reason} ->
-        {:error, {:http_error, reason}}
+
+        {:error, reason} ->
+          {:error, {:http_error, reason}}
       end
     catch
       :exit, reason ->
         {:error, {:http_error, reason}}
+
       error, reason ->
         case reason do
           %Jason.DecodeError{} -> {:error, {:json_decode_error, reason}}
@@ -313,7 +323,7 @@ defmodule Chainex.LLM.Ollama do
       completion_tokens: response["eval_count"] || 0,
       total_tokens: (response["prompt_eval_count"] || 0) + (response["eval_count"] || 0)
     }
-    
+
     response_data = %{
       content: content,
       model: response["model"] || "unknown",
@@ -321,7 +331,7 @@ defmodule Chainex.LLM.Ollama do
       usage: usage,
       finish_reason: if(response["done"], do: "stop", else: "length")
     }
-    
+
     {:ok, response_data}
   end
 
@@ -346,8 +356,9 @@ defmodule Chainex.LLM.Ollama do
           delta: parsed.content,
           done: true
         }
+
         {[{:ok, chunk}], {:done}}
-      
+
       {:error, reason} ->
         {[{:error, reason}], {:done}}
     end

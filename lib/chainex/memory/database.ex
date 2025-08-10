@@ -39,7 +39,7 @@ defmodule Chainex.Memory.Database do
   """
 
   import Ecto.Query
-  
+
   @type config :: %{
           repo: module(),
           table: String.t()
@@ -51,7 +51,8 @@ defmodule Chainex.Memory.Database do
   Validates the database configuration
   """
   @spec validate_config(map()) :: {:ok, config()} | {:error, atom()}
-  def validate_config(%{repo: repo, table: table} = config) when is_atom(repo) and is_binary(table) do
+  def validate_config(%{repo: repo, table: table} = config)
+      when is_atom(repo) and is_binary(table) do
     if Code.ensure_loaded?(repo) and function_exported?(repo, :__adapter__, 0) do
       {:ok, config}
     else
@@ -87,12 +88,13 @@ defmodule Chainex.Memory.Database do
         last_access: timestamp
       }
 
-      result = repo.insert_all(
-        table,
-        [changeset_data],
-        on_conflict: {:replace, [:value, :updated_at]},
-        conflict_target: [:key]
-      )
+      result =
+        repo.insert_all(
+          table,
+          [changeset_data],
+          on_conflict: {:replace, [:value, :updated_at]},
+          conflict_target: [:key]
+        )
 
       case result do
         {_count, _} -> :ok
@@ -110,10 +112,12 @@ defmodule Chainex.Memory.Database do
   def retrieve(%{repo: repo, table: table}, key) do
     try do
       serialized_key = serialize_key(key)
-      
-      query = from t in table,
-              where: t.key == ^serialized_key,
-              select: t.value
+
+      query =
+        from(t in table,
+          where: t.key == ^serialized_key,
+          select: t.value
+        )
 
       case repo.one(query) do
         nil ->
@@ -137,8 +141,10 @@ defmodule Chainex.Memory.Database do
       serialized_key = serialize_key(key)
       timestamp = :os.system_time(:second)
 
-      query = from t in table,
-              where: t.key == ^serialized_key
+      query =
+        from(t in table,
+          where: t.key == ^serialized_key
+        )
 
       case repo.update_all(query, inc: [access_count: 1], set: [last_access: timestamp]) do
         {_count, _} -> :ok
@@ -156,9 +162,11 @@ defmodule Chainex.Memory.Database do
   def delete(%{repo: repo, table: table}, key) do
     try do
       serialized_key = serialize_key(key)
-      
-      query = from t in table,
-              where: t.key == ^serialized_key
+
+      query =
+        from(t in table,
+          where: t.key == ^serialized_key
+        )
 
       case repo.delete_all(query) do
         {_count, _} -> :ok
@@ -175,11 +183,14 @@ defmodule Chainex.Memory.Database do
   @spec keys(config()) :: {:ok, [any()]} | {:error, any()}
   def keys(%{repo: repo, table: table}) do
     try do
-      query = from t in table,
-              select: t.key
+      query =
+        from(t in table,
+          select: t.key
+        )
 
-      keys = repo.all(query)
-             |> Enum.map(&deserialize_key/1)
+      keys =
+        repo.all(query)
+        |> Enum.map(&deserialize_key/1)
 
       {:ok, keys}
     catch
@@ -193,8 +204,10 @@ defmodule Chainex.Memory.Database do
   @spec size(config()) :: {:ok, non_neg_integer()} | {:error, any()}
   def size(%{repo: repo, table: table}) do
     try do
-      query = from t in table,
-              select: count()
+      query =
+        from(t in table,
+          select: count()
+        )
 
       count = repo.one(query) || 0
       {:ok, count}
@@ -209,7 +222,7 @@ defmodule Chainex.Memory.Database do
   @spec clear(config()) :: :ok | {:error, any()}
   def clear(%{repo: repo, table: table}) do
     try do
-      query = from t in table
+      query = from(t in table)
 
       case repo.delete_all(query) do
         {_count, _} -> :ok
@@ -226,22 +239,28 @@ defmodule Chainex.Memory.Database do
   @spec get_access_stats(config()) :: {:ok, map()} | {:error, any()}
   def get_access_stats(%{repo: repo, table: table}) do
     try do
-      query = from t in table,
-              select: {t.key, t.created_at, t.access_count, t.last_access}
+      query =
+        from(t in table,
+          select: {t.key, t.created_at, t.access_count, t.last_access}
+        )
 
       rows = repo.all(query)
 
-      stats = Enum.reduce(rows, %{access_count: %{}, last_access: %{}, creation_time: %{}}, 
-        fn {serialized_key, created_at, access_count, last_access}, acc ->
-          key = deserialize_key(serialized_key)
+      stats =
+        Enum.reduce(
+          rows,
+          %{access_count: %{}, last_access: %{}, creation_time: %{}},
+          fn {serialized_key, created_at, access_count, last_access}, acc ->
+            key = deserialize_key(serialized_key)
 
-          %{
-            acc
-            | access_count: Map.put(acc.access_count, key, access_count),
-              last_access: Map.put(acc.last_access, key, last_access),
-              creation_time: Map.put(acc.creation_time, key, created_at)
-          }
-        end)
+            %{
+              acc
+              | access_count: Map.put(acc.access_count, key, access_count),
+                last_access: Map.put(acc.last_access, key, last_access),
+                creation_time: Map.put(acc.creation_time, key, created_at)
+            }
+          end
+        )
 
       {:ok, stats}
     catch
@@ -256,28 +275,33 @@ defmodule Chainex.Memory.Database do
           {:ok, [any()]} | {:error, any()}
   def find_keys_for_pruning(%{repo: repo, table: table}, strategy, limit, ttl_cutoff \\ 0) do
     try do
-      query = case strategy do
-        :lru ->
-          from t in table,
-          order_by: [asc: t.last_access],
-          limit: ^limit,
-          select: t.key
+      query =
+        case strategy do
+          :lru ->
+            from(t in table,
+              order_by: [asc: t.last_access],
+              limit: ^limit,
+              select: t.key
+            )
 
-        :lfu ->
-          from t in table,
-          order_by: [asc: t.access_count],
-          limit: ^limit,
-          select: t.key
+          :lfu ->
+            from(t in table,
+              order_by: [asc: t.access_count],
+              limit: ^limit,
+              select: t.key
+            )
 
-        :ttl ->
-          from t in table,
-          where: t.created_at < ^ttl_cutoff,
-          limit: ^limit,
-          select: t.key
-      end
+          :ttl ->
+            from(t in table,
+              where: t.created_at < ^ttl_cutoff,
+              limit: ^limit,
+              select: t.key
+            )
+        end
 
-      keys = repo.all(query)
-             |> Enum.map(&deserialize_key/1)
+      keys =
+        repo.all(query)
+        |> Enum.map(&deserialize_key/1)
 
       {:ok, keys}
     catch
@@ -307,11 +331,16 @@ defmodule Chainex.Memory.Database do
   # Key serialization: Store type info with keys to preserve original types
   defp serialize_key(key) when is_binary(key), do: "s:" <> key
   defp serialize_key(key) when is_atom(key), do: "a:" <> Atom.to_string(key)
-  defp serialize_key(key), do: "t:" <> (:erlang.term_to_binary(key, [:compressed]) |> Base.encode64())
 
-  defp deserialize_key("s:" <> key), do: key  # String key
-  defp deserialize_key("a:" <> key), do: String.to_atom(key)  # Atom key
-  defp deserialize_key("t:" <> encoded_key) do  # Term key
+  defp serialize_key(key),
+    do: "t:" <> (:erlang.term_to_binary(key, [:compressed]) |> Base.encode64())
+
+  # String key
+  defp deserialize_key("s:" <> key), do: key
+  # Atom key
+  defp deserialize_key("a:" <> key), do: String.to_atom(key)
+  # Term key
+  defp deserialize_key("t:" <> encoded_key) do
     case Base.decode64(encoded_key) do
       {:ok, binary} ->
         try do
@@ -319,8 +348,12 @@ defmodule Chainex.Memory.Database do
         catch
           _, _ -> encoded_key
         end
-      :error -> encoded_key
+
+      :error ->
+        encoded_key
     end
   end
-  defp deserialize_key(key), do: key  # Fallback for old format
+
+  # Fallback for old format
+  defp deserialize_key(key), do: key
 end

@@ -37,8 +37,14 @@ defmodule Chainex.Chain.Executor do
         provider_costs: [],
         providers_used: []
       }
-      
-      case execute_steps_with_metadata(chain_with_memory.steps, initial_input, chain_with_memory, validated_vars, metadata) do
+
+      case execute_steps_with_metadata(
+             chain_with_memory.steps,
+             initial_input,
+             chain_with_memory,
+             validated_vars,
+             metadata
+           ) do
         {:ok, result, final_metadata} -> {:ok, result, final_metadata}
         {:error, reason} -> {:error, reason}
       end
@@ -57,16 +63,21 @@ defmodule Chainex.Chain.Executor do
   def execute_steps([step | rest], current_input, chain, variables) do
     # Check for timeout configuration
     timeout = Keyword.get(chain.options, :timeout)
-    
-    result = case timeout do
-      nil -> execute_step(step, current_input, chain, variables)
-      timeout_ms when timeout_ms > 0 ->
-        execute_with_timeout(timeout_ms, fn ->
+
+    result =
+      case timeout do
+        nil ->
           execute_step(step, current_input, chain, variables)
-        end)
-      _ -> execute_step(step, current_input, chain, variables)
-    end
-    
+
+        timeout_ms when timeout_ms > 0 ->
+          execute_with_timeout(timeout_ms, fn ->
+            execute_step(step, current_input, chain, variables)
+          end)
+
+        _ ->
+          execute_step(step, current_input, chain, variables)
+      end
+
     case result do
       {:ok, step_result} ->
         execute_steps(rest, step_result, chain, variables)
@@ -100,15 +111,16 @@ defmodule Chainex.Chain.Executor do
         # Update metadata based on step type
         updated_metadata = update_metadata_for_step(step, result, metadata)
         {:ok, result, updated_metadata}
-        
-      error -> error
+
+      error ->
+        error
     end
   end
 
   defp execute_step({:llm, provider, opts}, input, chain, variables) do
     # Handle fallback if specified
     fallback = Keyword.get(opts, :fallback)
-    
+
     # Check for forced errors (testing)
     if Keyword.get(opts, :mock_error, false) or Keyword.get(opts, :force_all_errors, false) do
       if fallback do
@@ -119,7 +131,9 @@ defmodule Chainex.Chain.Executor do
     else
       # Try primary provider, fallback on any error if fallback is specified
       case execute_llm_step(provider, opts, input, chain, variables) do
-        {:ok, result} -> {:ok, result}
+        {:ok, result} ->
+          {:ok, result}
+
         {:error, _} = error ->
           if fallback do
             execute_with_fallback(input, chain, variables, provider, opts, fallback)
@@ -210,39 +224,39 @@ defmodule Chainex.Chain.Executor do
 
   defp execute_step({:route_llm, router, opts}, input, chain, variables) do
     # Determine which provider to use based on router
-    {provider, provider_opts} = 
+    {provider, provider_opts} =
       cond do
         is_function(router, 1) ->
           router.(input)
-          
+
         is_function(router, 2) ->
           router.(input, variables)
-          
+
         is_map(router) ->
           # Look for task key in opts
           task = Keyword.get(opts, :task, :default)
           Map.get(router, task, Map.get(router, :default, {:mock, []}))
       end
-    
+
     execute_llm_step(provider, provider_opts, input, chain, variables)
   end
 
   defp execute_step({:llm_if, predicate, if_provider, else_provider}, input, chain, variables) do
     # Evaluate predicate
-    use_if = 
+    use_if =
       case :erlang.fun_info(predicate, :arity) do
         {:arity, 1} -> predicate.(input)
         {:arity, 2} -> predicate.(input, variables)
         _ -> false
       end
-    
+
     {provider, opts} = if use_if, do: if_provider, else: else_provider
     execute_llm_step(provider, opts, input, chain, variables)
   end
 
   defp execute_step({:parallel_llm, providers, _opts}, input, chain, variables) do
     # Execute all providers in parallel
-    tasks = 
+    tasks =
       Enum.map(providers, fn {provider, provider_opts} ->
         Task.async(fn ->
           case execute_llm_step(provider, provider_opts, input, chain, variables) do
@@ -251,11 +265,12 @@ defmodule Chainex.Chain.Executor do
           end
         end)
       end)
-    
+
     # Wait for all tasks to complete
-    results = Task.await_many(tasks, 30_000)
-    |> Enum.reject(&is_nil/1)
-    
+    results =
+      Task.await_many(tasks, 30_000)
+      |> Enum.reject(&is_nil/1)
+
     if Enum.empty?(results) do
       {:error, "All parallel LLM calls failed"}
     else
@@ -297,7 +312,7 @@ defmodule Chainex.Chain.Executor do
 
       # Get retry configuration
       retry_config = Keyword.get(chain.options, :retry, %{max_attempts: 1, delay: 0})
-      
+
       # Execute with retry wrapper
       execute_with_retry(retry_config, fn ->
         if tools != [] and tool_choice != :none do
@@ -311,15 +326,19 @@ defmodule Chainex.Chain.Executor do
             |> Keyword.put(:provider, provider)
 
           case LLM.chat(messages, clean_opts) do
-            {:ok, response} -> 
+            {:ok, response} ->
               # Store user input and assistant response in memory
               user_content = get_user_content_from_messages(messages)
+
               if user_content do
                 store_in_memory(chain, :user, user_content)
               end
+
               store_in_memory(chain, :assistant, response.content)
               {:ok, response.content}
-            error -> error
+
+            error ->
+              error
           end
         end
       end)
@@ -330,54 +349,58 @@ defmodule Chainex.Chain.Executor do
 
   defp initialize_memory(chain, variables) do
     case Keyword.get(chain.options, :memory) do
-      nil -> 
+      nil ->
         {:ok, chain}
-        
+
       memory_type when is_atom(memory_type) ->
         # Get session ID from variables or use default
         session_id = get_session_id(variables, chain.options)
-        
+
         # Get memory options
         memory_opts = get_memory_options(chain.options)
-        
+
         # For conversation memory, use ETS-backed storage for persistence across chain runs
-        memory = if memory_type == :conversation do
-          # Ensure ETS table exists for conversation memory
-          table_name = :chainex_conversation_memory
-          if :ets.whereis(table_name) == :undefined do
-            :ets.new(table_name, [:set, :public, :named_table])
+        memory =
+          if memory_type == :conversation do
+            # Ensure ETS table exists for conversation memory
+            table_name = :chainex_conversation_memory
+
+            if :ets.whereis(table_name) == :undefined do
+              :ets.new(table_name, [:set, :public, :named_table])
+            end
+
+            # Create memory instance that will use ETS for storage
+            Memory.new(memory_type, Map.put(memory_opts, :ets_table, table_name))
+          else
+            Memory.new(memory_type, memory_opts)
           end
-          
-          # Create memory instance that will use ETS for storage
-          Memory.new(memory_type, Map.put(memory_opts, :ets_table, table_name))
-        else
-          Memory.new(memory_type, memory_opts)
-        end
-        
+
         # Add memory to chain options
-        updated_options = chain.options
-        |> Keyword.put(:memory_instance, memory)
-        |> Keyword.put(:session_id, session_id)
-        
+        updated_options =
+          chain.options
+          |> Keyword.put(:memory_instance, memory)
+          |> Keyword.put(:session_id, session_id)
+
         {:ok, %{chain | options: updated_options}}
-        
+
       memory_instance ->
         # Memory instance already provided
         session_id = get_session_id(variables, chain.options)
-        
-        updated_options = chain.options
-        |> Keyword.put(:memory_instance, memory_instance)
-        |> Keyword.put(:session_id, session_id)
-        
+
+        updated_options =
+          chain.options
+          |> Keyword.put(:memory_instance, memory_instance)
+          |> Keyword.put(:session_id, session_id)
+
         {:ok, %{chain | options: updated_options}}
     end
   end
 
   defp get_session_id(variables, options) do
     # Priority: variables.session_id > options.session_id > default
-    Map.get(variables, :session_id) || 
-    Map.get(variables, "session_id") ||
-    Keyword.get(options, :session_id, "default")
+    Map.get(variables, :session_id) ||
+      Map.get(variables, "session_id") ||
+      Keyword.get(options, :session_id, "default")
   end
 
   defp get_memory_options(options) do
@@ -387,22 +410,27 @@ defmodule Chainex.Chain.Executor do
   defp inject_memory_context(chain, _variables, step_opts) do
     memory_instance = Keyword.get(chain.options, :memory_instance)
     session_id = Keyword.get(chain.options, :session_id, "default")
-    
+
     case memory_instance do
-      nil -> {:ok, step_opts}
+      nil ->
+        {:ok, step_opts}
+
       memory ->
         # Get conversation history and format for context
         case get_memory_context(memory, session_id, chain.options) do
           {:ok, context} when context != "" ->
             # Inject context into system message
             current_system = Keyword.get(step_opts, :system, "")
-            updated_system = if current_system == "" do
-              "Previous conversation:\n#{context}\n\nPlease continue the conversation naturally."
-            else
-              current_system <> "\n\nPrevious conversation:\n#{context}"
-            end
+
+            updated_system =
+              if current_system == "" do
+                "Previous conversation:\n#{context}\n\nPlease continue the conversation naturally."
+              else
+                current_system <> "\n\nPrevious conversation:\n#{context}"
+              end
+
             {:ok, Keyword.put(step_opts, :system, updated_system)}
-            
+
           _ ->
             {:ok, step_opts}
         end
@@ -411,55 +439,60 @@ defmodule Chainex.Chain.Executor do
 
   defp get_memory_context(memory, session_id, options) do
     context_limit = Keyword.get(options, :context_limit, 10)
-    
+
     case memory.type do
       :conversation ->
         # For conversation memory with ETS, retrieve directly from ETS
-        messages = if Map.has_key?(memory.options, :ets_table) do
-          table_name = memory.options.ets_table
-          case :ets.lookup(table_name, session_id) do
-            [{^session_id, msgs}] when is_list(msgs) -> msgs
-            _ -> []
+        messages =
+          if Map.has_key?(memory.options, :ets_table) do
+            table_name = memory.options.ets_table
+
+            case :ets.lookup(table_name, session_id) do
+              [{^session_id, msgs}] when is_list(msgs) -> msgs
+              _ -> []
+            end
+          else
+            # Fallback to regular memory retrieval
+            case Memory.retrieve(memory, session_id) do
+              {:ok, msgs} when is_list(msgs) -> msgs
+              _ -> []
+            end
           end
+
+        if messages == [] do
+          {:ok, ""}
         else
-          # Fallback to regular memory retrieval
+          # Messages are stored newest first, so take recent ones and reverse for chronological order
+          recent_messages =
+            messages
+            |> Enum.take(context_limit)
+            |> Enum.reverse()
+
+          formatted = format_conversation_messages(recent_messages)
+          {:ok, formatted}
+        end
+
+      :persistent ->
+        # For persistent memory, retrieve conversation history from storage
+        messages =
           case Memory.retrieve(memory, session_id) do
             {:ok, msgs} when is_list(msgs) -> msgs
             _ -> []
           end
-        end
-        
+
         if messages == [] do
           {:ok, ""}
         else
           # Messages are stored newest first, so take recent ones and reverse for chronological order
-          recent_messages = messages
-          |> Enum.take(context_limit)
-          |> Enum.reverse()
-          
+          recent_messages =
+            messages
+            |> Enum.take(context_limit)
+            |> Enum.reverse()
+
           formatted = format_conversation_messages(recent_messages)
           {:ok, formatted}
         end
-        
-      :persistent ->
-        # For persistent memory, retrieve conversation history from storage
-        messages = case Memory.retrieve(memory, session_id) do
-          {:ok, msgs} when is_list(msgs) -> msgs
-          _ -> []
-        end
-        
-        if messages == [] do
-          {:ok, ""}
-        else
-          # Messages are stored newest first, so take recent ones and reverse for chronological order
-          recent_messages = messages
-          |> Enum.take(context_limit)
-          |> Enum.reverse()
-          
-          formatted = format_conversation_messages(recent_messages)
-          {:ok, formatted}
-        end
-        
+
       _ ->
         # For other memory types (buffer, vector), don't inject context automatically
         {:ok, ""}
@@ -471,15 +504,19 @@ defmodule Chainex.Chain.Executor do
     |> Enum.map(fn message ->
       case message do
         %{role: role, content: content} ->
-          role_str = case role do
-            :user -> "Human"
-            :assistant -> "Assistant"
-            :system -> "System"
-            _ -> to_string(role)
-          end
+          role_str =
+            case role do
+              :user -> "Human"
+              :assistant -> "Assistant"
+              :system -> "System"
+              _ -> to_string(role)
+            end
+
           "#{role_str}: #{content}"
+
         content when is_binary(content) ->
           "Message: #{content}"
+
         other ->
           "Entry: #{inspect(other)}"
       end
@@ -490,59 +527,64 @@ defmodule Chainex.Chain.Executor do
   defp store_in_memory(chain, role, content) do
     memory_instance = Keyword.get(chain.options, :memory_instance)
     session_id = Keyword.get(chain.options, :session_id, "default")
-    
+
     case memory_instance do
-      nil -> :ok
+      nil ->
+        :ok
+
       memory ->
         message = %{
           role: role,
           content: content,
           timestamp: :os.system_time(:millisecond)
         }
-        
+
         # For conversation memory with ETS, store directly in ETS
         if memory.type == :conversation and Map.has_key?(memory.options, :ets_table) do
           table_name = memory.options.ets_table
-          
+
           # Get existing messages from ETS
-          existing_messages = case :ets.lookup(table_name, session_id) do
-            [{^session_id, messages}] when is_list(messages) -> messages
-            _ -> []
-          end
-          
+          existing_messages =
+            case :ets.lookup(table_name, session_id) do
+              [{^session_id, messages}] when is_list(messages) -> messages
+              _ -> []
+            end
+
           # Add new message to conversation history
           updated_messages = [message | existing_messages]
-          
+
           # Store in ETS
           :ets.insert(table_name, {session_id, updated_messages})
         else
           # For persistent and other memory types
           # Get existing conversation history for this session
-          existing_messages = case Memory.retrieve(memory, session_id) do
-            {:ok, messages} when is_list(messages) -> messages
-            _ -> []
-          end
-          
+          existing_messages =
+            case Memory.retrieve(memory, session_id) do
+              {:ok, messages} when is_list(messages) -> messages
+              _ -> []
+            end
+
           # Add new message to conversation history
           updated_messages = [message | existing_messages]
-          
+
           # Store updated conversation history under session_id
           updated_memory = Memory.store(memory, session_id, updated_messages)
-          
+
           # For persistent memory, the data is already persisted to file/database
           # The updated_memory instance has the new data in its cache
           # We can't update the chain's memory instance here, but that's OK
           # because persistent memory will reload from storage on next run
           updated_memory
         end
-        
+
         :ok
     end
   end
 
   defp get_user_content_from_messages(messages) do
     messages
-    |> Enum.reverse() # Get most recent first
+    # Get most recent first
+    |> Enum.reverse()
     |> Enum.find(fn msg -> msg.role == :user end)
     |> case do
       %{content: content} -> content
@@ -553,38 +595,48 @@ defmodule Chainex.Chain.Executor do
   # Helper functions
 
   defp execute_with_fallback(input, chain, variables, _primary, opts, fallback) do
-    fallback_providers = 
+    fallback_providers =
       case fallback do
         list when is_list(list) -> list
         single -> [single]
       end
-    
+
     # Try each fallback provider
-    Enum.reduce_while(fallback_providers, {:error, "Primary provider failed"}, fn provider, _acc ->
-      fallback_opts = 
+    Enum.reduce_while(fallback_providers, {:error, "Primary provider failed"}, fn provider,
+                                                                                  _acc ->
+      fallback_opts =
         if is_tuple(provider) do
           {provider_name, provider_opts} = provider
           Keyword.merge(opts, provider_opts) |> Keyword.put(:provider, provider_name)
         else
           Keyword.put(opts, :provider, provider)
         end
-      
+
       # Remove only mock_error for fallback attempts, but keep force_all_errors to force all to fail
-      clean_opts = fallback_opts
-      |> Keyword.delete(:mock_error)
-      
+      clean_opts =
+        fallback_opts
+        |> Keyword.delete(:mock_error)
+
       # For testing, if the original opts had mock_error, we should only allow :mock provider to succeed
       # If force_all_errors is true, all providers should fail
-      should_force_error = (Keyword.get(opts, :mock_error, false) and provider != :mock) or 
-                          Keyword.get(opts, :force_all_errors, false)
-      
-      result = if should_force_error do
-        # Skip calling real providers and return an error directly for testing
-        {:error, "Forced error for testing"}
-      else
-        execute_llm_step(Keyword.get(clean_opts, :provider), clean_opts, input, chain, variables)
-      end
-      
+      should_force_error =
+        (Keyword.get(opts, :mock_error, false) and provider != :mock) or
+          Keyword.get(opts, :force_all_errors, false)
+
+      result =
+        if should_force_error do
+          # Skip calling real providers and return an error directly for testing
+          {:error, "Forced error for testing"}
+        else
+          execute_llm_step(
+            Keyword.get(clean_opts, :provider),
+            clean_opts,
+            input,
+            chain,
+            variables
+          )
+        end
+
       case result do
         {:ok, result} -> {:halt, {:ok, result}}
         {:error, _} -> {:cont, {:error, "All providers failed"}}
@@ -598,8 +650,10 @@ defmodule Chainex.Chain.Executor do
       :long_context -> :anthropic
       :image_generation -> :openai
       :code_generation -> :openai
-      :fast_response -> :openai  # GPT-3.5-turbo
-      _ -> :mock  # Default fallback
+      # GPT-3.5-turbo
+      :fast_response -> :openai
+      # Default fallback
+      _ -> :mock
     end
   end
 
@@ -620,33 +674,35 @@ defmodule Chainex.Chain.Executor do
 
   defp update_llm_metadata(provider, opts, result, metadata) do
     # Update metadata with provider usage
-    {cost, tokens} = case result do
-      response when is_map(response) ->
-        # Extract real usage data from LLM response if available
-        usage = Map.get(response, :usage, %{})
-        prompt_tokens = Map.get(usage, :prompt_tokens, 0)
-        completion_tokens = Map.get(usage, :completion_tokens, 0)
-        
-        # Estimate cost based on provider and tokens (rough estimates)
-        estimated_cost = estimate_cost(provider, prompt_tokens, completion_tokens)
-        
-        {estimated_cost, %{prompt: prompt_tokens, completion: completion_tokens}}
-        
-      _ ->
-        # Fallback to mock values for testing
-        mock_cost = Keyword.get(opts, :mock_cost, 0.01)
-        mock_tokens = Keyword.get(opts, :mock_tokens, %{prompt: 50, completion: 100})
-        {mock_cost, mock_tokens}
-    end
-    
-    %{metadata |
-      total_cost: metadata.total_cost + cost,
-      total_tokens: %{
-        prompt: metadata.total_tokens.prompt + tokens.prompt,
-        completion: metadata.total_tokens.completion + tokens.completion
-      },
-      provider_costs: metadata.provider_costs ++ [{provider, cost}],
-      providers_used: Enum.uniq(metadata.providers_used ++ [provider])
+    {cost, tokens} =
+      case result do
+        response when is_map(response) ->
+          # Extract real usage data from LLM response if available
+          usage = Map.get(response, :usage, %{})
+          prompt_tokens = Map.get(usage, :prompt_tokens, 0)
+          completion_tokens = Map.get(usage, :completion_tokens, 0)
+
+          # Estimate cost based on provider and tokens (rough estimates)
+          estimated_cost = estimate_cost(provider, prompt_tokens, completion_tokens)
+
+          {estimated_cost, %{prompt: prompt_tokens, completion: completion_tokens}}
+
+        _ ->
+          # Fallback to mock values for testing
+          mock_cost = Keyword.get(opts, :mock_cost, 0.01)
+          mock_tokens = Keyword.get(opts, :mock_tokens, %{prompt: 50, completion: 100})
+          {mock_cost, mock_tokens}
+      end
+
+    %{
+      metadata
+      | total_cost: metadata.total_cost + cost,
+        total_tokens: %{
+          prompt: metadata.total_tokens.prompt + tokens.prompt,
+          completion: metadata.total_tokens.completion + tokens.completion
+        },
+        provider_costs: metadata.provider_costs ++ [{provider, cost}],
+        providers_used: Enum.uniq(metadata.providers_used ++ [provider])
     }
   end
 
@@ -655,15 +711,15 @@ defmodule Chainex.Chain.Executor do
     # Claude 3.5 Sonnet: $3/MTok input, $15/MTok output
     # Claude 3.5 Haiku: $1/MTok input, $5/MTok output
     # Using average rates for estimation
-    input_cost = (prompt_tokens * 2.0) / 1_000_000
-    output_cost = (completion_tokens * 10.0) / 1_000_000
+    input_cost = prompt_tokens * 2.0 / 1_000_000
+    output_cost = completion_tokens * 10.0 / 1_000_000
     input_cost + output_cost
   end
 
   defp estimate_cost(:openai, prompt_tokens, completion_tokens) do
     # GPT-4: ~$10/MTok input, ~$30/MTok output (varies by model)
-    input_cost = (prompt_tokens * 10.0) / 1_000_000
-    output_cost = (completion_tokens * 30.0) / 1_000_000
+    input_cost = prompt_tokens * 10.0 / 1_000_000
+    output_cost = completion_tokens * 30.0 / 1_000_000
     input_cost + output_cost
   end
 
@@ -701,10 +757,10 @@ defmodule Chainex.Chain.Executor do
     case get_system_message(chain, step_opts, variables) do
       {:error, _} = error ->
         error
-        
+
       {:ok, system_content} ->
         messages = if system_content, do: [%{role: :system, content: system_content}], else: []
-        
+
         # Add user message
         user_content =
           case input do
@@ -723,11 +779,11 @@ defmodule Chainex.Chain.Executor do
       # Step-level system message takes precedence
       Keyword.has_key?(step_opts, :system) ->
         {:ok, Keyword.get(step_opts, :system)}
-        
+
       # Fall back to chain system prompt
       chain.system_prompt ->
         VariableResolver.resolve(chain.system_prompt, variables)
-        
+
       true ->
         {:ok, nil}
     end
@@ -808,7 +864,7 @@ defmodule Chainex.Chain.Executor do
         struct_data = convert_keys_for_struct(data, module)
         {:ok, struct(module, struct_data)}
       rescue
-        e -> 
+        e ->
           {:error, "Failed to parse struct #{module}: #{Exception.message(e)}"}
       end
     end
@@ -819,7 +875,7 @@ defmodule Chainex.Chain.Executor do
       struct_data = convert_keys_for_struct(input, module)
       {:ok, struct(module, struct_data)}
     rescue
-      e -> 
+      e ->
         {:error, "Failed to parse struct #{module}: #{Exception.message(e)}"}
     end
   end
@@ -847,71 +903,75 @@ defmodule Chainex.Chain.Executor do
     end
   end
 
-
   # Convert map keys to atoms only if they exist as struct fields
   defp convert_keys_for_struct(map, module) when is_map(map) do
     # Get the struct fields and their types
     struct_fields = module.__struct__() |> Map.keys() |> MapSet.new()
     field_types = get_struct_field_types(module)
-    
+
     # Filter and convert keys
-    filtered_map = 
+    filtered_map =
       Enum.reduce(map, %{}, fn
         {key, value}, acc when is_binary(key) ->
           # Try to convert to existing atom first, fallback to creating if needed
-          atom_key = try do
-            String.to_existing_atom(key)
-          rescue
-            ArgumentError ->
-              String.to_atom(key)
-          end
-          
+          atom_key =
+            try do
+              String.to_existing_atom(key)
+            rescue
+              ArgumentError ->
+                String.to_atom(key)
+            end
+
           # Only include the key if it's a valid struct field
           if MapSet.member?(struct_fields, atom_key) do
             # Convert nested structs if the field type is a struct module
-            converted_value = case Map.get(field_types, atom_key) do
-              nested_module when is_atom(nested_module) and nested_module != nil ->
-                # Try to convert to nested struct if it's a map
-                convert_nested_struct(value, nested_module)
-              _ ->
-                # Regular conversion for lists and other types
-                convert_keys_for_struct(value, module)
-            end
-            
+            converted_value =
+              case Map.get(field_types, atom_key) do
+                nested_module when is_atom(nested_module) and nested_module != nil ->
+                  # Try to convert to nested struct if it's a map
+                  convert_nested_struct(value, nested_module)
+
+                _ ->
+                  # Regular conversion for lists and other types
+                  convert_keys_for_struct(value, module)
+              end
+
             Map.put(acc, atom_key, converted_value)
           else
             # Skip unknown fields
             acc
           end
-          
+
         {key, value}, acc when is_atom(key) ->
           # Key is already an atom, check if it's a valid field
           if MapSet.member?(struct_fields, key) do
             # Convert nested structs if the field type is a struct module
-            converted_value = case Map.get(field_types, key) do
-              nested_module when is_atom(nested_module) and nested_module != nil ->
-                convert_nested_struct(value, nested_module)
-              _ ->
-                convert_keys_for_struct(value, module)
-            end
-            
+            converted_value =
+              case Map.get(field_types, key) do
+                nested_module when is_atom(nested_module) and nested_module != nil ->
+                  convert_nested_struct(value, nested_module)
+
+                _ ->
+                  convert_keys_for_struct(value, module)
+              end
+
             Map.put(acc, key, converted_value)
           else
             acc
           end
-          
+
         {key, value}, acc ->
           # Other key types, keep as-is if they might be valid
           Map.put(acc, key, convert_keys_for_struct(value, module))
       end)
-    
+
     filtered_map
   end
-  
+
   defp convert_keys_for_struct(list, module) when is_list(list) do
     Enum.map(list, &convert_keys_for_struct(&1, module))
   end
-  
+
   defp convert_keys_for_struct(value, _module), do: value
 
   # Get struct field types using naming conventions and module introspection
@@ -919,10 +979,10 @@ defmodule Chainex.Chain.Executor do
     try do
       # Get the current module's namespace
       module_namespace = get_module_namespace(module)
-      
+
       # Get all struct fields
       struct_fields = module.__struct__() |> Map.keys() |> Enum.reject(&(&1 == :__struct__))
-      
+
       # Map each field to potential nested struct modules
       Enum.reduce(struct_fields, %{}, fn field, acc ->
         case find_nested_struct_module(field, module_namespace, module) do
@@ -946,7 +1006,7 @@ defmodule Chainex.Chain.Executor do
   defp find_nested_struct_module(field_name, namespace, parent_module) when is_atom(field_name) do
     # Convert field name to potential module names
     potential_modules = generate_potential_struct_names(field_name, namespace, parent_module)
-    
+
     # Find the first module that exists and defines a struct
     Enum.find_value(potential_modules, fn module_name ->
       if is_struct_module?(module_name), do: module_name, else: nil
@@ -956,33 +1016,34 @@ defmodule Chainex.Chain.Executor do
   # Generate potential struct module names from field name
   defp generate_potential_struct_names(field_name, namespace, parent_module) do
     field_string = Atom.to_string(field_name)
-    
+
     # Generate different naming conventions:
     # 1. CamelCase: personal_info -> PersonalInfo
     # 2. Singular: addresses -> Address  
     # 3. Direct: company -> Company
-    camel_case = 
+    camel_case =
       field_string
       |> String.split("_")
       |> Enum.map(&String.capitalize/1)
       |> Enum.join("")
-    
-    singular = singularize_field_name(field_string)
-    |> String.split("_")
-    |> Enum.map(&String.capitalize/1)
-    |> Enum.join("")
-    
+
+    singular =
+      singularize_field_name(field_string)
+      |> String.split("_")
+      |> Enum.map(&String.capitalize/1)
+      |> Enum.join("")
+
     direct = String.capitalize(field_string)
-    
+
     # Try different module paths
     base_names = [camel_case, singular, direct] |> Enum.uniq()
-    
+
     Enum.flat_map(base_names, fn name ->
       potential_modules = [
         # Try the same module as the parent (common in tests)
         get_sibling_module(parent_module, name)
       ]
-      
+
       # Add namespace module if namespace exists
       if namespace != [] do
         [Module.concat(namespace ++ [name]) | potential_modules]
@@ -997,11 +1058,17 @@ defmodule Chainex.Chain.Executor do
   # Simple singularization for common cases
   defp singularize_field_name(field_string) do
     cond do
-      String.ends_with?(field_string, "ies") -> String.slice(field_string, 0, String.length(field_string) - 3) <> "y"
-      String.ends_with?(field_string, "ses") -> String.slice(field_string, 0, String.length(field_string) - 2)
-      String.ends_with?(field_string, "s") and not String.ends_with?(field_string, "ss") -> 
+      String.ends_with?(field_string, "ies") ->
+        String.slice(field_string, 0, String.length(field_string) - 3) <> "y"
+
+      String.ends_with?(field_string, "ses") ->
+        String.slice(field_string, 0, String.length(field_string) - 2)
+
+      String.ends_with?(field_string, "s") and not String.ends_with?(field_string, "ss") ->
         String.slice(field_string, 0, String.length(field_string) - 1)
-      true -> field_string
+
+      true ->
+        field_string
     end
   end
 
@@ -1036,7 +1103,8 @@ defmodule Chainex.Chain.Executor do
         converted_map = convert_keys_for_struct(value, target_module)
         struct(target_module, converted_map)
       rescue
-        _ -> value  # Fall back to original value if conversion fails
+        # Fall back to original value if conversion fails
+        _ -> value
       end
     else
       value
@@ -1090,7 +1158,15 @@ defmodule Chainex.Chain.Executor do
     end
   end
 
-  @spec handle_tool_calls(map(), [map()], [Chainex.Tool.t()], atom(), keyword(), keyword(), non_neg_integer()) :: {:ok, String.t()} | {:error, any()}
+  @spec handle_tool_calls(
+          map(),
+          [map()],
+          [Chainex.Tool.t()],
+          atom(),
+          keyword(),
+          keyword(),
+          non_neg_integer()
+        ) :: {:ok, String.t()} | {:error, any()}
   @dialyzer {:nowarn_function, handle_tool_calls: 7}
   defp handle_tool_calls(assistant_response, messages, tools, provider, opts, _chain_opts, _depth) do
     # Execute each tool call
@@ -1158,12 +1234,14 @@ defmodule Chainex.Chain.Executor do
 
   @spec format_tool_result({:ok, any()} | {:error, any()}) :: String.t()
   defp format_tool_result({:ok, result}) when is_binary(result), do: result
+
   defp format_tool_result({:ok, result}) do
     case Jason.encode(result) do
       {:ok, json} -> json
       {:error, _} -> inspect(result)
     end
   end
+
   defp format_tool_result({:error, error}), do: "Error: #{inspect(error)}"
 
   @spec convert_tool_arguments(map()) :: map()
@@ -1192,7 +1270,7 @@ defmodule Chainex.Chain.Executor do
   defp execute_with_retry(retry_config, fun) do
     max_attempts = Map.get(retry_config, :max_attempts, 1)
     delay = Map.get(retry_config, :delay, 1000)
-    
+
     do_retry(fun, max_attempts, delay, 1)
   end
 
@@ -1203,15 +1281,16 @@ defmodule Chainex.Chain.Executor do
 
   defp do_retry(fun, max_attempts, delay, attempt) do
     case fun.() do
-      {:ok, _} = success -> 
+      {:ok, _} = success ->
         success
-        
+
       {:error, reason} = error ->
         if should_retry?(reason) and attempt < max_attempts do
           # Log retry attempt
           if delay > 0 do
             Process.sleep(delay)
           end
+
           do_retry(fun, max_attempts, delay, attempt + 1)
         else
           error
@@ -1224,6 +1303,7 @@ defmodule Chainex.Chain.Executor do
         if delay > 0 do
           Process.sleep(delay)
         end
+
         do_retry(fun, max_attempts, delay, attempt + 1)
       else
         reraise exception, __STACKTRACE__
@@ -1249,7 +1329,7 @@ defmodule Chainex.Chain.Executor do
 
   defp execute_with_timeout(timeout_ms, fun) when is_integer(timeout_ms) and timeout_ms > 0 do
     task = Task.async(fun)
-    
+
     case Task.yield(task, timeout_ms) || Task.shutdown(task) do
       {:ok, result} -> result
       nil -> {:error, :timeout}
@@ -1260,12 +1340,13 @@ defmodule Chainex.Chain.Executor do
 
   defp apply_fallback(chain, {:error, reason} = error) do
     case Keyword.get(chain.options, :fallback) do
-      nil -> 
-        error  # Return error as-is, don't wrap again
-        
+      nil ->
+        # Return error as-is, don't wrap again
+        error
+
       fallback when is_function(fallback, 1) ->
         {:ok, fallback.(reason)}
-        
+
       fallback ->
         {:ok, fallback}
     end

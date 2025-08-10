@@ -244,30 +244,31 @@ defmodule Chainex.LLM.Anthropic do
               }
             ]
           }
-        
+
         # Handle assistant messages with tool calls
         %{role: :assistant, tool_calls: tool_calls} when tool_calls != nil ->
-          content_blocks = 
+          content_blocks =
             if Map.get(message, :content) && message.content != "" do
               [%{"type" => "text", "text" => message.content}]
             else
               []
             end
-          
-          tool_blocks = Enum.map(tool_calls, fn call ->
-            %{
-              "type" => "tool_use",
-              "id" => call.id,
-              "name" => call.name,
-              "input" => call.arguments
-            }
-          end)
-          
+
+          tool_blocks =
+            Enum.map(tool_calls, fn call ->
+              %{
+                "type" => "tool_use",
+                "id" => call.id,
+                "name" => call.name,
+                "input" => call.arguments
+              }
+            end)
+
           %{
             "role" => "assistant",
             "content" => content_blocks ++ tool_blocks
           }
-        
+
         # Handle regular messages
         _ ->
           %{
@@ -280,7 +281,8 @@ defmodule Chainex.LLM.Anthropic do
 
   defp format_role(:user), do: "user"
   defp format_role(:assistant), do: "assistant"
-  defp format_role(:tool), do: "user"  # Tool results go as user messages in Anthropic
+  # Tool results go as user messages in Anthropic
+  defp format_role(:tool), do: "user"
   defp format_role(role) when is_binary(role), do: role
   defp format_role(role), do: to_string(role)
 
@@ -289,8 +291,12 @@ defmodule Chainex.LLM.Anthropic do
 
   defp maybe_add_tools(body, config) do
     case Keyword.get(config, :tools) do
-      nil -> body
-      [] -> body
+      nil ->
+        body
+
+      [] ->
+        body
+
       tools when is_list(tools) ->
         # Tools should already be in the correct format from the Executor
         Map.put(body, "tools", tools)
@@ -301,7 +307,8 @@ defmodule Chainex.LLM.Anthropic do
     case Keyword.get(config, :tool_choice) do
       nil -> body
       :auto -> Map.put(body, "tool_choice", %{"type" => "auto"})
-      :none -> body  # Don't send tool_choice for none
+      # Don't send tool_choice for none
+      :none -> body
       :required -> Map.put(body, "tool_choice", %{"type" => "any"})
       :any -> Map.put(body, "tool_choice", %{"type" => "any"})
       {:tool, name} -> Map.put(body, "tool_choice", %{"type" => "tool", "name" => name})
@@ -403,7 +410,7 @@ defmodule Chainex.LLM.Anthropic do
     }
 
     # Add tool_calls if present
-    response_data = 
+    response_data =
       if tool_calls != [] do
         Map.put(response_data, :tool_calls, tool_calls)
       else
@@ -422,15 +429,16 @@ defmodule Chainex.LLM.Anthropic do
       case block do
         %{"type" => "text", "text" => text} ->
           {text_acc <> text, tools_acc}
-        
+
         %{"type" => "tool_use", "id" => id, "name" => name, "input" => input} ->
           tool_call = %{
             id: id,
             name: name,
             arguments: input
           }
+
           {text_acc, tools_acc ++ [tool_call]}
-        
+
         _ ->
           {text_acc, tools_acc}
       end

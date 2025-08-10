@@ -11,12 +11,14 @@ defmodule Chainex.Tools.Calculator do
   def new do
     Tool.new(
       name: "calculator",
-      description: "Performs mathematical calculations. Supports basic arithmetic operations (+, -, *, /), exponentiation (^), and common math functions (sqrt, sin, cos, tan, log, ln, abs, round, floor, ceil).",
+      description:
+        "Performs mathematical calculations. Supports basic arithmetic operations (+, -, *, /), exponentiation (^), and common math functions (sqrt, sin, cos, tan, log, ln, abs, round, floor, ceil).",
       parameters: %{
         expression: %{
           type: :string,
           required: true,
-          description: "Mathematical expression to evaluate (e.g., '2 + 3', 'sqrt(16)', 'sin(3.14159/2)')"
+          description:
+            "Mathematical expression to evaluate (e.g., '2 + 3', 'sqrt(16)', 'sin(3.14159/2)')"
         }
       },
       function: &evaluate/1
@@ -49,7 +51,7 @@ defmodule Chainex.Tools.Calculator do
   # Safe evaluation of mathematical expressions
   defp safe_eval(expression) do
     # Clean the expression and replace common math functions
-    cleaned = 
+    cleaned =
       expression
       |> String.replace(~r/\s+/, "")
       |> String.replace("^", " ** ")

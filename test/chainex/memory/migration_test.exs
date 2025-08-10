@@ -1,32 +1,32 @@
 defmodule Chainex.Memory.MigrationTest do
   use ExUnit.Case, async: true
-  
+
   describe "migration helper module" do
     test "module exists and functions are exported" do
       # Test that the migration module exists
       assert Code.ensure_loaded?(Chainex.Memory.Migration)
-      
+
       # Test that required functions are exported
       assert function_exported?(Chainex.Memory.Migration, :create_memory_table, 0)
       assert function_exported?(Chainex.Memory.Migration, :create_memory_table, 1)
       assert function_exported?(Chainex.Memory.Migration, :create_memory_table, 2)
-      
+
       assert function_exported?(Chainex.Memory.Migration, :drop_memory_table, 0)
       assert function_exported?(Chainex.Memory.Migration, :drop_memory_table, 1)
-      
+
       assert function_exported?(Chainex.Memory.Migration, :create_memory_indexes, 0)
       assert function_exported?(Chainex.Memory.Migration, :create_memory_indexes, 1)
-      
+
       assert function_exported?(Chainex.Memory.Migration, :drop_memory_indexes, 0)
       assert function_exported?(Chainex.Memory.Migration, :drop_memory_indexes, 1)
-      
+
       assert function_exported?(Chainex.Memory.Migration, :add_memory_table, 0)
       assert function_exported?(Chainex.Memory.Migration, :add_memory_table, 1)
       assert function_exported?(Chainex.Memory.Migration, :add_memory_table, 2)
-      
+
       assert function_exported?(Chainex.Memory.Migration, :remove_memory_table, 0)
       assert function_exported?(Chainex.Memory.Migration, :remove_memory_table, 1)
-      
+
       assert function_exported?(Chainex.Memory.Migration, :upgrade_memory_table, 0)
       assert function_exported?(Chainex.Memory.Migration, :upgrade_memory_table, 1)
     end
@@ -34,7 +34,7 @@ defmodule Chainex.Memory.MigrationTest do
     test "module can be imported in migration context" do
       # Test that the module can be imported without errors
       # This simulates what would happen in a real migration
-      
+
       # Check that the functions are available from the migration module
       # Functions exist and can be called (verified through other tests)
       # Testing actual import capability rather than function exports
@@ -44,7 +44,7 @@ defmodule Chainex.Memory.MigrationTest do
     test "default table name is correct" do
       # Test that the default table name matches what Database module expects
       alias Chainex.Memory.Database
-      
+
       # The default table should work with Database validation
       if Code.ensure_loaded?(Ecto.Adapters.SQLite3) do
         test_repo = Chainex.RepoCase.TestRepo
@@ -52,7 +52,8 @@ defmodule Chainex.Memory.MigrationTest do
         assert {:ok, ^config} = Database.validate_config(config)
       else
         # If no test repo available, just verify the constant exists
-        assert "chainex_memory" == "chainex_memory"  # Default table name
+        # Default table name
+        assert "chainex_memory" == "chainex_memory"
       end
     end
   end

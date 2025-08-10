@@ -26,7 +26,7 @@ if Mix.env() == :test do
     log: false
 
   config :chainex, ecto_repos: [Chainex.RepoCase.TestRepo]
-  
+
   # Disable SQL debug logging in tests
   config :logger, level: :warning
 end

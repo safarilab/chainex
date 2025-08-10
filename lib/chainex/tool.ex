@@ -302,14 +302,14 @@ defmodule Chainex.Tool do
   """
   @spec to_llm_format(t(), atom()) :: map()
   def to_llm_format(%__MODULE__{} = tool, :anthropic) do
-    properties = 
+    properties =
       tool.parameters
       |> Enum.map(fn {name, schema} ->
         {to_string(name), parameter_to_json_schema(schema)}
       end)
       |> Enum.into(%{})
 
-    required = 
+    required =
       tool.parameters
       |> Enum.filter(fn {_name, schema} -> Map.get(schema, :required, false) end)
       |> Enum.map(fn {name, _schema} -> to_string(name) end)
@@ -326,14 +326,14 @@ defmodule Chainex.Tool do
   end
 
   def to_llm_format(%__MODULE__{} = tool, :openai) do
-    properties = 
+    properties =
       tool.parameters
       |> Enum.map(fn {name, schema} ->
         {to_string(name), parameter_to_json_schema(schema)}
       end)
       |> Enum.into(%{})
 
-    required = 
+    required =
       tool.parameters
       |> Enum.filter(fn {_name, schema} -> Map.get(schema, :required, false) end)
       |> Enum.map(fn {name, _schema} -> to_string(name) end)
@@ -359,7 +359,7 @@ defmodule Chainex.Tool do
 
   defp parameter_to_json_schema(schema) do
     base = %{"type" => type_to_json_type(Map.get(schema, :type, :string))}
-    
+
     base
     |> maybe_add_field("description", Map.get(schema, :description))
     |> maybe_add_field("enum", Map.get(schema, :enum))

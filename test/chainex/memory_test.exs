@@ -754,33 +754,38 @@ defmodule Chainex.MemoryTest do
 
   describe "database backend integration" do
     import Chainex.RepoCase, only: [repo: 0]
-    
+
     setup do
       # Start owner for database tests
       pid = Ecto.Adapters.SQL.Sandbox.start_owner!(repo(), shared: false)
       on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
-      
+
       # Create table for this test
-      Ecto.Adapters.SQL.query!(repo(), """
-        CREATE TABLE IF NOT EXISTS chainex_memory (
-          key TEXT PRIMARY KEY,
-          value BLOB NOT NULL,
-          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-          updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-          access_count INTEGER NOT NULL DEFAULT 0,
-          last_access INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-        )
-      """, [])
-      
+      Ecto.Adapters.SQL.query!(
+        repo(),
+        """
+          CREATE TABLE IF NOT EXISTS chainex_memory (
+            key TEXT PRIMARY KEY,
+            value BLOB NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            access_count INTEGER NOT NULL DEFAULT 0,
+            last_access INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+          )
+        """,
+        []
+      )
+
       {:ok, table: "chainex_memory"}
     end
 
     test "creates database backend memory", %{table: table} do
-      memory = Memory.new(:persistent, %{
-        backend: :database,
-        repo: repo(),
-        table: table
-      })
+      memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          repo: repo(),
+          table: table
+        })
 
       assert memory.type == :persistent
       assert memory.options.backend == :database
@@ -789,11 +794,12 @@ defmodule Chainex.MemoryTest do
     end
 
     test "stores and retrieves values with database backend", %{table: table} do
-      memory = Memory.new(:persistent, %{
-        backend: :database,
-        repo: repo(),
-        table: table
-      })
+      memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          repo: repo(),
+          table: table
+        })
 
       # Store values
       memory = Memory.store(memory, :db_key1, "db_value1")
@@ -806,41 +812,45 @@ defmodule Chainex.MemoryTest do
     end
 
     test "database backend size and keys operations", %{table: table} do
-      memory = Memory.new(:persistent, %{
-        backend: :database,
-        repo: repo(),
-        table: table
-      })
+      memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          repo: repo(),
+          table: table
+        })
 
       # Initially empty
       assert Memory.size(memory) == 0
       assert Memory.keys(memory) == []
 
       # Add items
-      memory = memory
+      memory =
+        memory
         |> Memory.store(:db1, "value1")
         |> Memory.store(:db2, "value2")
         |> Memory.store("string_key", "value3")
 
       # Check size and keys
       assert Memory.size(memory) == 3
-      
+
       keys = Memory.keys(memory)
       assert length(keys) == 3
       assert :db1 in keys
-      assert :db2 in keys  
+      assert :db2 in keys
       assert "string_key" in keys
     end
 
     test "database backend delete operations", %{table: table} do
-      memory = Memory.new(:persistent, %{
-        backend: :database,
-        repo: repo(),
-        table: table
-      })
+      memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          repo: repo(),
+          table: table
+        })
 
       # Store and delete
-      memory = memory
+      memory =
+        memory
         |> Memory.store(:delete_me, "temporary")
         |> Memory.store(:keep_me, "permanent")
 
@@ -849,21 +859,23 @@ defmodule Chainex.MemoryTest do
 
       # Delete one item
       memory = Memory.delete(memory, :delete_me)
-      
+
       assert Memory.size(memory) == 1
       assert {:error, :not_found} = Memory.retrieve(memory, :delete_me)
       assert {:ok, "permanent"} = Memory.retrieve(memory, :keep_me)
     end
 
     test "database backend clear operations", %{table: table} do
-      memory = Memory.new(:persistent, %{
-        backend: :database,
-        repo: repo(),
-        table: table
-      })
+      memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          repo: repo(),
+          table: table
+        })
 
       # Add data
-      memory = memory
+      memory =
+        memory
         |> Memory.store(:clear1, "value1")
         |> Memory.store(:clear2, "value2")
 
@@ -876,18 +888,20 @@ defmodule Chainex.MemoryTest do
     end
 
     test "database backend supports smart pruning", %{table: table} do
-      memory = Memory.new(:persistent, %{
-        backend: :database,
-        repo: repo(),
-        table: table,
-        max_size: 3,
-        prune_strategy: :lru,
-        auto_prune: true,
-        prune_percentage: 0.5
-      })
+      memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          repo: repo(),
+          table: table,
+          max_size: 3,
+          prune_strategy: :lru,
+          auto_prune: true,
+          prune_percentage: 0.5
+        })
 
       # Store items up to limit
-      memory = memory
+      memory =
+        memory
         |> Memory.store(:item1, "value1")
         |> Memory.store(:item2, "value2")
         |> Memory.store(:item3, "value3")
@@ -900,22 +914,24 @@ defmodule Chainex.MemoryTest do
       # Should have pruned some items
       final_size = Memory.size(memory)
       assert final_size <= 3
-      assert final_size >= 1  # At least some items should remain
+      # At least some items should remain
+      assert final_size >= 1
     end
 
     test "database backend get_and_track updates access stats", %{table: table} do
-      memory = Memory.new(:persistent, %{
-        backend: :database,
-        repo: repo(),
-        table: table
-      })
+      memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          repo: repo(),
+          table: table
+        })
 
       # Store a value
       memory = Memory.store(memory, :track_me, "tracked_value")
 
       # Track access
       {updated_memory, {:ok, "tracked_value"}} = Memory.get_and_track(memory, :track_me)
-      
+
       # Verify the value was retrieved correctly
       assert updated_memory.access_stats.access_count[:track_me] == 1
 
@@ -926,14 +942,15 @@ defmodule Chainex.MemoryTest do
 
     test "database backend handles invalid configuration gracefully", %{table: table} do
       # Missing repo
-      memory = Memory.new(:persistent, %{
-        backend: :database,
-        table: table
-      })
+      memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          table: table
+        })
 
       # Operations should still work but may fail gracefully
       memory = Memory.store(memory, :test, "value")
-      
+
       # The memory should still track stats even if database operations fail
       assert Map.has_key?(memory.access_stats.creation_time, :test)
     end
@@ -941,14 +958,16 @@ defmodule Chainex.MemoryTest do
     test "database backend works with conversation memory type", %{table: table} do
       # Note: This tests that conversation type can also use database backend
       # In practice, users might want separate tables for different memory types
-      memory = Memory.new(:persistent, %{
-        backend: :database,
-        repo: repo(),
-        table: table
-      })
+      memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          repo: repo(),
+          table: table
+        })
 
       # Store conversation-style entries
-      memory = memory
+      memory =
+        memory
         |> Memory.store(:msg1, %{role: "user", content: "Hello"})
         |> Memory.store(:msg2, %{role: "assistant", content: "Hi there!"})
 
@@ -963,13 +982,14 @@ defmodule Chainex.MemoryTest do
       on_exit(fn -> File.rm(temp_file) end)
 
       file_memory = Memory.new(:persistent, %{file_path: temp_file})
-      
+
       # Create database backend memory  
-      db_memory = Memory.new(:persistent, %{
-        backend: :database,
-        repo: repo(),
-        table: table
-      })
+      db_memory =
+        Memory.new(:persistent, %{
+          backend: :database,
+          repo: repo(),
+          table: table
+        })
 
       # Store different data in each
       file_memory = Memory.store(file_memory, :file_key, "file_value")

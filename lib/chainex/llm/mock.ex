@@ -2,9 +2,9 @@ defmodule Chainex.LLM.Mock do
   @moduledoc """
   Mock LLM provider for testing.
   """
-  
+
   @behaviour Chainex.LLM.Provider
-  
+
   @doc """
   Returns a mock response based on the last user message.
   """
@@ -13,24 +13,25 @@ defmodule Chainex.LLM.Mock do
       # Check for forced error
       Keyword.get(opts, :mock_error, false) or Keyword.get(opts, :force_all_errors, false) ->
         {:error, "Mock error for testing"}
-        
+
       # Check for required capability
       required_capability = Keyword.get(opts, :required_capability) ->
         {:error, "Mock provider does not support capability: #{required_capability}"}
-        
+
       # Normal response
       true ->
-        user_message = messages
-        |> Enum.filter(fn msg -> msg.role == :user end)
-        |> List.last()
-        
+        user_message =
+          messages
+          |> Enum.filter(fn msg -> msg.role == :user end)
+          |> List.last()
+
         content = if user_message, do: user_message.content, else: "test"
-        
+
         # Allow custom response override with variable resolution
         case Keyword.get(opts, :response) do
-          nil -> 
+          nil ->
             mock_content = "Mock response for: #{content}"
-            
+
             response = %{
               content: mock_content,
               model: "mock-model",
@@ -42,13 +43,13 @@ defmodule Chainex.LLM.Mock do
               },
               finish_reason: "stop"
             }
-            
+
             {:ok, response}
-            
+
           custom_response when is_binary(custom_response) ->
             # Try to resolve variables in the response template
             mock_content = resolve_mock_variables(custom_response, content)
-            
+
             response = %{
               content: mock_content,
               model: "mock-model",
@@ -60,14 +61,14 @@ defmodule Chainex.LLM.Mock do
               },
               finish_reason: "stop"
             }
-            
+
             {:ok, response}
-            
+
           {:error, _} = error_response ->
             # Return error directly for testing
             error_response
-            
-          custom_response -> 
+
+          custom_response ->
             response = %{
               content: custom_response,
               model: "mock-model",
@@ -79,53 +80,57 @@ defmodule Chainex.LLM.Mock do
               },
               finish_reason: "stop"
             }
-            
+
             {:ok, response}
         end
     end
   end
-  
+
   @doc """
   Returns a mock stream.
   """
   def stream_chat(messages, opts) do
     {:ok, response} = chat(messages, opts)
-    
+
     # Create a simple stream that returns the response in chunks
     Stream.resource(
       fn -> String.graphemes(response.content) end,
       fn
-        [] -> {:halt, nil}
+        [] ->
+          {:halt, nil}
+
         [char | rest] ->
           chunk = %{
             content: char,
             delta: char,
             done: rest == []
           }
+
           {[chunk], rest}
       end,
       fn _ -> :ok end
     )
   end
-  
+
   @doc """
   Mock token counting.
   """
   def count_tokens(messages, _opts) do
-    total = messages
-    |> Enum.map(fn msg -> String.length(msg.content) end)
-    |> Enum.sum()
-    
+    total =
+      messages
+      |> Enum.map(fn msg -> String.length(msg.content) end)
+      |> Enum.sum()
+
     {:ok, div(total, 4)}
   end
-  
+
   @doc """
   Returns mock models.
   """
   def models(_opts) do
     {:ok, ["mock-model-1", "mock-model-2"]}
   end
-  
+
   # Private helper to resolve simple variables in mock responses
   defp resolve_mock_variables(template, user_content) do
     # Simple variable resolution for {{variable}} patterns

@@ -10,21 +10,21 @@ defmodule Chainex.LLM.Provider do
   @type messages :: [message()]
   @type config :: keyword()
   @type response :: %{
-    content: String.t(),
-    model: String.t(),
-    provider: atom(),
-    usage: %{
-      prompt_tokens: pos_integer(),
-      completion_tokens: pos_integer(),
-      total_tokens: pos_integer()
-    },
-    finish_reason: String.t()
-  }
+          content: String.t(),
+          model: String.t(),
+          provider: atom(),
+          usage: %{
+            prompt_tokens: pos_integer(),
+            completion_tokens: pos_integer(),
+            total_tokens: pos_integer()
+          },
+          finish_reason: String.t()
+        }
   @type streaming_chunk :: %{
-    content: String.t(),
-    delta: String.t(),
-    done: boolean()
-  }
+          content: String.t(),
+          delta: String.t(),
+          done: boolean()
+        }
 
   @doc """
   Send a chat completion request to the provider
