@@ -19,8 +19,8 @@ defmodule Chainex.MixProject do
       name: "Chainex",
       description:
         "A powerful Elixir library for building LLM chains - the Elixir equivalent of LangChain",
-      source_url: "https://github.com/your-org/chainex",
-      homepage_url: "https://github.com/your-org/chainex",
+      source_url: "https://github.com/safaricrypto/chainex",
+      homepage_url: "https://github.com/safaricrypto/chainex",
       docs: [
         main: "getting_started",
         logo: "logo.png",
@@ -71,10 +71,10 @@ defmodule Chainex.MixProject do
           "A powerful Elixir library for building LLM chains - the Elixir equivalent of LangChain",
         licenses: ["MIT"],
         links: %{
-          "GitHub" => "https://github.com/your-org/chainex",
+          "GitHub" => "https://github.com/safaricrypto/chainex",
           "Documentation" => "https://hexdocs.pm/chainex"
         },
-        maintainers: ["Your Name"],
+        maintainers: ["Reza Safari"],
         files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md logo.png)
       ]
     ]
