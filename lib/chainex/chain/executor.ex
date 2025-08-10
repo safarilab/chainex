@@ -6,6 +6,7 @@ defmodule Chainex.Chain.Executor do
   alias Chainex.Chain
   alias Chainex.Chain.VariableResolver
   alias Chainex.LLM
+  alias Chainex.Memory
 
   @type variables :: %{atom() => any()} | %{String.t() => any()}
 
@@ -15,8 +16,9 @@ defmodule Chainex.Chain.Executor do
   @spec execute(Chain.t(), variables()) :: {:ok, any()} | {:error, any()}
   def execute(%Chain{} = chain, variables) do
     with {:ok, validated_vars} <- validate_required_variables(chain, variables),
-         {:ok, initial_input} <- prepare_initial_input(chain, validated_vars) do
-      execute_steps(chain.steps, initial_input, chain, validated_vars)
+         {:ok, initial_input} <- prepare_initial_input(chain, validated_vars),
+         {:ok, chain_with_memory} <- initialize_memory(chain, validated_vars) do
+      execute_steps(chain_with_memory.steps, initial_input, chain_with_memory, validated_vars)
     end
   end
 
@@ -26,7 +28,8 @@ defmodule Chainex.Chain.Executor do
   @spec execute_with_metadata(Chain.t(), variables()) :: {:ok, any(), map()} | {:error, any()}
   def execute_with_metadata(%Chain{} = chain, variables) do
     with {:ok, validated_vars} <- validate_required_variables(chain, variables),
-         {:ok, initial_input} <- prepare_initial_input(chain, validated_vars) do
+         {:ok, initial_input} <- prepare_initial_input(chain, validated_vars),
+         {:ok, chain_with_memory} <- initialize_memory(chain, validated_vars) do
       # Initialize metadata tracking
       metadata = %{
         total_cost: 0.0,
@@ -35,7 +38,7 @@ defmodule Chainex.Chain.Executor do
         providers_used: []
       }
       
-      case execute_steps_with_metadata(chain.steps, initial_input, chain, validated_vars, metadata) do
+      case execute_steps_with_metadata(chain_with_memory.steps, initial_input, chain_with_memory, validated_vars, metadata) do
         {:ok, result, final_metadata} -> {:ok, result, final_metadata}
         {:error, reason} -> {:error, reason}
       end
@@ -272,8 +275,9 @@ defmodule Chainex.Chain.Executor do
   end
 
   defp execute_llm_step(provider, opts, input, chain, variables) do
-    with {:ok, messages} <- build_messages(chain, input, variables, opts),
-         {:ok, llm_opts} <- prepare_llm_options(chain, opts, variables) do
+    with {:ok, enhanced_opts} <- inject_memory_context(chain, variables, opts),
+         {:ok, messages} <- build_messages(chain, input, variables, enhanced_opts),
+         {:ok, llm_opts} <- prepare_llm_options(chain, enhanced_opts, variables) do
       # Check if tools are enabled
       tools = Keyword.get(llm_opts, :tools, [])
       tool_choice = Keyword.get(llm_opts, :tool_choice, :none)
@@ -289,10 +293,215 @@ defmodule Chainex.Chain.Executor do
           |> Keyword.put(:provider, provider)
 
         case LLM.chat(messages, clean_opts) do
-          {:ok, response} -> {:ok, response.content}
+          {:ok, response} -> 
+            # Store user input and assistant response in memory
+            user_content = get_user_content_from_messages(messages)
+            if user_content do
+              store_in_memory(chain, :user, user_content)
+            end
+            store_in_memory(chain, :assistant, response.content)
+            {:ok, response.content}
           error -> error
         end
       end
+    end
+  end
+
+  # Memory management functions
+
+  defp initialize_memory(chain, variables) do
+    case Keyword.get(chain.options, :memory) do
+      nil -> 
+        {:ok, chain}
+        
+      memory_type when is_atom(memory_type) ->
+        # Get session ID from variables or use default
+        session_id = get_session_id(variables, chain.options)
+        
+        # Get memory options
+        memory_opts = get_memory_options(chain.options)
+        
+        # For conversation memory, use ETS-backed storage for persistence across chain runs
+        memory = if memory_type == :conversation do
+          # Ensure ETS table exists for conversation memory
+          table_name = :chainex_conversation_memory
+          if :ets.whereis(table_name) == :undefined do
+            :ets.new(table_name, [:set, :public, :named_table])
+          end
+          
+          # Create memory instance that will use ETS for storage
+          Memory.new(memory_type, Map.put(memory_opts, :ets_table, table_name))
+        else
+          Memory.new(memory_type, memory_opts)
+        end
+        
+        # Add memory to chain options
+        updated_options = chain.options
+        |> Keyword.put(:memory_instance, memory)
+        |> Keyword.put(:session_id, session_id)
+        
+        {:ok, %{chain | options: updated_options}}
+        
+      memory_instance ->
+        # Memory instance already provided
+        session_id = get_session_id(variables, chain.options)
+        
+        updated_options = chain.options
+        |> Keyword.put(:memory_instance, memory_instance)
+        |> Keyword.put(:session_id, session_id)
+        
+        {:ok, %{chain | options: updated_options}}
+    end
+  end
+
+  defp get_session_id(variables, options) do
+    # Priority: variables.session_id > options.session_id > default
+    Map.get(variables, :session_id) || 
+    Map.get(variables, "session_id") ||
+    Keyword.get(options, :session_id, "default")
+  end
+
+  defp get_memory_options(options) do
+    Keyword.get(options, :memory_options, %{})
+  end
+
+  defp inject_memory_context(chain, _variables, step_opts) do
+    memory_instance = Keyword.get(chain.options, :memory_instance)
+    session_id = Keyword.get(chain.options, :session_id, "default")
+    
+    case memory_instance do
+      nil -> {:ok, step_opts}
+      memory ->
+        # Get conversation history and format for context
+        case get_memory_context(memory, session_id, chain.options) do
+          {:ok, context} when context != "" ->
+            # Inject context into system message
+            current_system = Keyword.get(step_opts, :system, "")
+            updated_system = if current_system == "" do
+              "Previous conversation:\n#{context}\n\nPlease continue the conversation naturally."
+            else
+              current_system <> "\n\nPrevious conversation:\n#{context}"
+            end
+            {:ok, Keyword.put(step_opts, :system, updated_system)}
+            
+          _ ->
+            {:ok, step_opts}
+        end
+    end
+  end
+
+  defp get_memory_context(memory, session_id, options) do
+    context_limit = Keyword.get(options, :context_limit, 10)
+    
+    case memory.type do
+      :conversation ->
+        # For conversation memory with ETS, retrieve directly from ETS
+        messages = if Map.has_key?(memory.options, :ets_table) do
+          table_name = memory.options.ets_table
+          case :ets.lookup(table_name, session_id) do
+            [{^session_id, msgs}] when is_list(msgs) -> msgs
+            _ -> []
+          end
+        else
+          # Fallback to regular memory retrieval
+          case Memory.retrieve(memory, session_id) do
+            {:ok, msgs} when is_list(msgs) -> msgs
+            _ -> []
+          end
+        end
+        
+        if messages == [] do
+          {:ok, ""}
+        else
+          # Messages are stored newest first, so take recent ones and reverse for chronological order
+          recent_messages = messages
+          |> Enum.take(context_limit)
+          |> Enum.reverse()
+          
+          formatted = format_conversation_messages(recent_messages)
+          {:ok, formatted}
+        end
+        
+      _ ->
+        # For other memory types, don't inject context automatically
+        {:ok, ""}
+    end
+  end
+
+  defp format_conversation_messages(messages) do
+    messages
+    |> Enum.map(fn message ->
+      case message do
+        %{role: role, content: content} ->
+          role_str = case role do
+            :user -> "Human"
+            :assistant -> "Assistant"
+            :system -> "System"
+            _ -> to_string(role)
+          end
+          "#{role_str}: #{content}"
+        content when is_binary(content) ->
+          "Message: #{content}"
+        other ->
+          "Entry: #{inspect(other)}"
+      end
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp store_in_memory(chain, role, content) do
+    memory_instance = Keyword.get(chain.options, :memory_instance)
+    session_id = Keyword.get(chain.options, :session_id, "default")
+    
+    case memory_instance do
+      nil -> :ok
+      memory ->
+        message = %{
+          role: role,
+          content: content,
+          timestamp: :os.system_time(:millisecond)
+        }
+        
+        # For conversation memory with ETS, store directly in ETS
+        if memory.type == :conversation and Map.has_key?(memory.options, :ets_table) do
+          table_name = memory.options.ets_table
+          
+          # Get existing messages from ETS
+          existing_messages = case :ets.lookup(table_name, session_id) do
+            [{^session_id, messages}] when is_list(messages) -> messages
+            _ -> []
+          end
+          
+          # Add new message to conversation history
+          updated_messages = [message | existing_messages]
+          
+          # Store in ETS
+          :ets.insert(table_name, {session_id, updated_messages})
+        else
+          # Get existing conversation history for this session
+          existing_messages = case Memory.retrieve(memory, session_id) do
+            {:ok, messages} when is_list(messages) -> messages
+            _ -> []
+          end
+          
+          # Add new message to conversation history
+          updated_messages = [message | existing_messages]
+          
+          # Store updated conversation history under session_id
+          Memory.store(memory, session_id, updated_messages)
+        end
+        
+        :ok
+    end
+  end
+
+  defp get_user_content_from_messages(messages) do
+    messages
+    |> Enum.reverse() # Get most recent first
+    |> Enum.find(fn msg -> msg.role == :user end)
+    |> case do
+      %{content: content} -> content
+      _ -> nil
     end
   end
 
