@@ -26,10 +26,16 @@ defmodule Chainex.LLM.Mock do
         
         content = if user_message, do: user_message.content, else: "test"
         
-        # Allow custom response override
+        # Allow custom response override with variable resolution
         mock_content = case Keyword.get(opts, :response) do
-          nil -> "Mock response for: #{content}"
-          custom_response -> custom_response
+          nil -> 
+            "Mock response for: #{content}"
+          custom_response when is_binary(custom_response) ->
+            # Try to resolve variables in the response template
+            # Extract the last user message content for simple variable resolution
+            resolve_mock_variables(custom_response, content)
+          custom_response -> 
+            custom_response
         end
         
         response = %{
@@ -87,5 +93,17 @@ defmodule Chainex.LLM.Mock do
   """
   def models(_opts) do
     {:ok, ["mock-model-1", "mock-model-2"]}
+  end
+  
+  # Private helper to resolve simple variables in mock responses
+  defp resolve_mock_variables(template, user_content) do
+    # Simple variable resolution for {{variable}} patterns
+    # Just replace {{message}} or {{msg}} with the user content for testing
+    template
+    |> String.replace("{{message}}", user_content)
+    |> String.replace("{{msg}}", user_content)
+    |> String.replace("{{input}}", user_content)
+    |> String.replace("{{data}}", user_content)
+    |> String.replace("{{num}}", user_content)
   end
 end

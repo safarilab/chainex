@@ -422,8 +422,27 @@ defmodule Chainex.Chain.Executor do
           {:ok, formatted}
         end
         
+      :persistent ->
+        # For persistent memory, retrieve conversation history from storage
+        messages = case Memory.retrieve(memory, session_id) do
+          {:ok, msgs} when is_list(msgs) -> msgs
+          _ -> []
+        end
+        
+        if messages == [] do
+          {:ok, ""}
+        else
+          # Messages are stored newest first, so take recent ones and reverse for chronological order
+          recent_messages = messages
+          |> Enum.take(context_limit)
+          |> Enum.reverse()
+          
+          formatted = format_conversation_messages(recent_messages)
+          {:ok, formatted}
+        end
+        
       _ ->
-        # For other memory types, don't inject context automatically
+        # For other memory types (buffer, vector), don't inject context automatically
         {:ok, ""}
     end
   end
@@ -478,6 +497,7 @@ defmodule Chainex.Chain.Executor do
           # Store in ETS
           :ets.insert(table_name, {session_id, updated_messages})
         else
+          # For persistent and other memory types
           # Get existing conversation history for this session
           existing_messages = case Memory.retrieve(memory, session_id) do
             {:ok, messages} when is_list(messages) -> messages
@@ -488,7 +508,13 @@ defmodule Chainex.Chain.Executor do
           updated_messages = [message | existing_messages]
           
           # Store updated conversation history under session_id
-          Memory.store(memory, session_id, updated_messages)
+          updated_memory = Memory.store(memory, session_id, updated_messages)
+          
+          # For persistent memory, the data is already persisted to file/database
+          # The updated_memory instance has the new data in its cache
+          # We can't update the chain's memory instance here, but that's OK
+          # because persistent memory will reload from storage on next run
+          updated_memory
         end
         
         :ok

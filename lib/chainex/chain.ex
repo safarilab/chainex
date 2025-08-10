@@ -353,11 +353,41 @@ defmodule Chainex.Chain do
 
   ## Examples
 
+      # Simple conversation memory (uses ETS)
       chain |> Chain.with_memory(:conversation)
+      
+      # Buffer memory
+      chain |> Chain.with_memory(:buffer)
+      
+      # Persistent memory with file backend
+      chain |> Chain.with_memory(:persistent, file_path: "/tmp/memory.dat")
+      
+      # Persistent memory with database backend
+      chain |> Chain.with_memory(:persistent, 
+        backend: :database, 
+        repo: MyApp.Repo, 
+        table: "chainex_memory"
+      )
+      
+      # With pruning options
+      chain |> Chain.with_memory(:persistent,
+        file_path: "/tmp/memory.dat",
+        max_size: 100,
+        prune_strategy: :lru,
+        auto_prune: true
+      )
   """
-  @spec with_memory(t(), atom()) :: t()
-  def with_memory(%__MODULE__{} = chain, memory_type) do
-    updated_options = Keyword.put(chain.options, :memory, memory_type)
+  @spec with_memory(t(), atom(), keyword() | map()) :: t()
+  def with_memory(%__MODULE__{} = chain, memory_type, options \\ []) do
+    memory_options = case options do
+      opts when is_list(opts) -> Enum.into(opts, %{})
+      opts when is_map(opts) -> opts
+    end
+    
+    updated_options = chain.options
+    |> Keyword.put(:memory, memory_type)
+    |> Keyword.put(:memory_options, memory_options)
+    
     %{chain | options: updated_options}
   end
 
