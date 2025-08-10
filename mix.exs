@@ -13,6 +13,60 @@ defmodule Chainex.MixProject do
       preferred_cli_env: [
         "test.integration": :test,
         "test.all": :test
+      ],
+
+      # Docs
+      name: "Chainex",
+      description: "A powerful Elixir library for building LLM chains - the Elixir equivalent of LangChain",
+      source_url: "https://github.com/your-org/chainex",
+      homepage_url: "https://github.com/your-org/chainex",
+      docs: [
+        main: "getting_started",
+        extras: [
+          "README.md",
+          "CHANGELOG.md",
+          "guides/getting_started.md",
+          "guides/memory_guide.md", 
+          "guides/tools_guide.md",
+          "guides/parsing_guide.md",
+          "guides/error_handling_guide.md"
+        ],
+        groups_for_extras: [
+          "Guides": [
+            "guides/getting_started.md",
+            "guides/memory_guide.md",
+            "guides/tools_guide.md", 
+            "guides/parsing_guide.md",
+            "guides/error_handling_guide.md"
+          ]
+        ],
+        groups_for_modules: [
+          "Core": [
+            Chainex.Chain
+          ],
+          "LLM Providers": [
+            Chainex.LLM,
+            Chainex.LLM.Anthropic,
+            Chainex.LLM.OpenAI,
+            Chainex.LLM.Mock
+          ],
+          "Memory": [
+            Chainex.Memory,
+            Chainex.Memory.Database
+          ],
+          "Tools": [
+            Chainex.Tool
+          ],
+          "Utilities": [
+            Chainex.Chain.Executor,
+            Chainex.Chain.VariableResolver
+          ]
+        ]
+      ],
+      package: [
+        description: "A powerful Elixir library for building LLM chains",
+        licenses: ["MIT"],
+        links: %{"GitHub" => "https://github.com/your-org/chainex"}
       ]
     ]
   end
@@ -50,7 +104,8 @@ defmodule Chainex.MixProject do
       {:ecto_sqlite3, "~> 0.16", only: :test},
       {:bypass, "~> 2.1", only: :test},
       # Development dependencies
-      {:dialyxir, "~> 1.3", only: [:dev], runtime: false}
+      {:dialyxir, "~> 1.3", only: [:dev], runtime: false},
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
   end
 end
