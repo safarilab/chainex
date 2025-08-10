@@ -1019,7 +1019,7 @@ defmodule Chainex.Chain.Executor do
 
     # Generate different naming conventions:
     # 1. CamelCase: personal_info -> PersonalInfo
-    # 2. Singular: addresses -> Address  
+    # 2. Singular: addresses -> Address
     # 3. Direct: company -> Company
     camel_case =
       field_string
@@ -1351,6 +1351,4 @@ defmodule Chainex.Chain.Executor do
         {:ok, fallback}
     end
   end
-
-  defp apply_fallback(_chain, error), do: error
 end
