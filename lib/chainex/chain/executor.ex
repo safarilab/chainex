@@ -55,12 +55,25 @@ defmodule Chainex.Chain.Executor do
   end
 
   def execute_steps([step | rest], current_input, chain, variables) do
-    case execute_step(step, current_input, chain, variables) do
-      {:ok, result} ->
-        execute_steps(rest, result, chain, variables)
+    # Check for timeout configuration
+    timeout = Keyword.get(chain.options, :timeout)
+    
+    result = case timeout do
+      nil -> execute_step(step, current_input, chain, variables)
+      timeout_ms when timeout_ms > 0 ->
+        execute_with_timeout(timeout_ms, fn ->
+          execute_step(step, current_input, chain, variables)
+        end)
+      _ -> execute_step(step, current_input, chain, variables)
+    end
+    
+    case result do
+      {:ok, step_result} ->
+        execute_steps(rest, step_result, chain, variables)
 
       {:error, _} = error ->
-        error
+        # Check for fallback
+        apply_fallback(chain, error)
     end
   end
 
@@ -282,28 +295,34 @@ defmodule Chainex.Chain.Executor do
       tools = Keyword.get(llm_opts, :tools, [])
       tool_choice = Keyword.get(llm_opts, :tool_choice, :none)
 
-      if tools != [] and tool_choice != :none do
-        # Execute with tool calling support
-        execute_llm_with_tools(messages, provider, llm_opts, chain.options, 0)
-      else
-        # Regular LLM call without tools - remove tools from options
-        clean_opts =
-          llm_opts
-          |> Keyword.delete(:tools)
-          |> Keyword.put(:provider, provider)
+      # Get retry configuration
+      retry_config = Keyword.get(chain.options, :retry, %{max_attempts: 1, delay: 0})
+      
+      # Execute with retry wrapper
+      execute_with_retry(retry_config, fn ->
+        if tools != [] and tool_choice != :none do
+          # Execute with tool calling support
+          execute_llm_with_tools(messages, provider, llm_opts, chain.options, 0)
+        else
+          # Regular LLM call without tools - remove tools from options
+          clean_opts =
+            llm_opts
+            |> Keyword.delete(:tools)
+            |> Keyword.put(:provider, provider)
 
-        case LLM.chat(messages, clean_opts) do
-          {:ok, response} -> 
-            # Store user input and assistant response in memory
-            user_content = get_user_content_from_messages(messages)
-            if user_content do
-              store_in_memory(chain, :user, user_content)
-            end
-            store_in_memory(chain, :assistant, response.content)
-            {:ok, response.content}
-          error -> error
+          case LLM.chat(messages, clean_opts) do
+            {:ok, response} -> 
+              # Store user input and assistant response in memory
+              user_content = get_user_content_from_messages(messages)
+              if user_content do
+                store_in_memory(chain, :user, user_content)
+              end
+              store_in_memory(chain, :assistant, response.content)
+              {:ok, response.content}
+            error -> error
+          end
         end
-      end
+      end)
     end
   end
 
@@ -1167,4 +1186,90 @@ defmodule Chainex.Chain.Executor do
         {key, value}
     end)
   end
+
+  # Retry and error handling helpers
+
+  defp execute_with_retry(retry_config, fun) do
+    max_attempts = Map.get(retry_config, :max_attempts, 1)
+    delay = Map.get(retry_config, :delay, 1000)
+    
+    do_retry(fun, max_attempts, delay, 1)
+  end
+
+  defp do_retry(fun, max_attempts, _delay, attempt) when attempt > max_attempts do
+    # Final attempt without catching errors
+    fun.()
+  end
+
+  defp do_retry(fun, max_attempts, delay, attempt) do
+    case fun.() do
+      {:ok, _} = success -> 
+        success
+        
+      {:error, reason} = error ->
+        if should_retry?(reason) and attempt < max_attempts do
+          # Log retry attempt
+          if delay > 0 do
+            Process.sleep(delay)
+          end
+          do_retry(fun, max_attempts, delay, attempt + 1)
+        else
+          error
+        end
+    end
+  rescue
+    exception ->
+      if attempt < max_attempts do
+        # Log retry attempt for exception
+        if delay > 0 do
+          Process.sleep(delay)
+        end
+        do_retry(fun, max_attempts, delay, attempt + 1)
+      else
+        reraise exception, __STACKTRACE__
+      end
+  end
+
+  defp should_retry?(reason) do
+    case reason do
+      # Common retryable errors
+      "rate_limit" <> _ -> true
+      "timeout" <> _ -> true
+      "Too many requests" <> _ -> true
+      {:timeout, _} -> true
+      {:rate_limit, _} -> true
+      {:socket_closed_remotely, _} -> true
+      :timeout -> true
+      :closed -> true
+      :econnrefused -> true
+      %{status: status} when status in [429, 503, 504] -> true
+      _ -> false
+    end
+  end
+
+  defp execute_with_timeout(timeout_ms, fun) when is_integer(timeout_ms) and timeout_ms > 0 do
+    task = Task.async(fun)
+    
+    case Task.yield(task, timeout_ms) || Task.shutdown(task) do
+      {:ok, result} -> result
+      nil -> {:error, :timeout}
+    end
+  end
+
+  defp execute_with_timeout(_timeout, fun), do: fun.()
+
+  defp apply_fallback(chain, {:error, reason} = error) do
+    case Keyword.get(chain.options, :fallback) do
+      nil -> 
+        error  # Return error as-is, don't wrap again
+        
+      fallback when is_function(fallback, 1) ->
+        {:ok, fallback.(reason)}
+        
+      fallback ->
+        {:ok, fallback}
+    end
+  end
+
+  defp apply_fallback(_chain, error), do: error
 end

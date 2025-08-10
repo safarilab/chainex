@@ -418,6 +418,63 @@ defmodule Chainex.Chain do
   end
 
   @doc """
+  Configures automatic retry on failures.
+
+  ## Options
+  - `:max_attempts` - Maximum retry attempts (default: 3)
+  - `:delay` - Delay between retries in milliseconds (default: 1000)
+
+  ## Examples
+
+      # Retry up to 3 times with 1 second delay
+      chain |> Chain.with_retry()
+      
+      # Custom retry configuration
+      chain |> Chain.with_retry(max_attempts: 5, delay: 2000)
+  """
+  @spec with_retry(t(), keyword()) :: t()
+  def with_retry(%__MODULE__{} = chain, opts \\ []) do
+    retry_config = %{
+      max_attempts: Keyword.get(opts, :max_attempts, 3),
+      delay: Keyword.get(opts, :delay, 1000)
+    }
+    
+    updated_options = Keyword.put(chain.options, :retry, retry_config)
+    %{chain | options: updated_options}
+  end
+
+  @doc """
+  Sets timeout for chain execution.
+
+  ## Examples
+
+      # 10 second timeout
+      chain |> Chain.with_timeout(10_000)
+  """
+  @spec with_timeout(t(), non_neg_integer()) :: t()
+  def with_timeout(%__MODULE__{} = chain, timeout_ms) when is_integer(timeout_ms) and timeout_ms >= 0 do
+    updated_options = Keyword.put(chain.options, :timeout, timeout_ms)
+    %{chain | options: updated_options}
+  end
+
+  @doc """
+  Sets a fallback value if the chain fails.
+
+  ## Examples
+
+      # Return default message on failure
+      chain |> Chain.with_fallback("Sorry, something went wrong. Please try again.")
+      
+      # Use a function for dynamic fallback
+      chain |> Chain.with_fallback(fn _error -> "Service temporarily unavailable" end)
+  """
+  @spec with_fallback(t(), any() | (any() -> any())) :: t()
+  def with_fallback(%__MODULE__{} = chain, fallback) do
+    updated_options = Keyword.put(chain.options, :fallback, fallback)
+    %{chain | options: updated_options}
+  end
+
+  @doc """
   Adds metadata to the chain.
 
   ## Examples

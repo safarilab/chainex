@@ -27,30 +27,61 @@ defmodule Chainex.LLM.Mock do
         content = if user_message, do: user_message.content, else: "test"
         
         # Allow custom response override with variable resolution
-        mock_content = case Keyword.get(opts, :response) do
+        case Keyword.get(opts, :response) do
           nil -> 
-            "Mock response for: #{content}"
+            mock_content = "Mock response for: #{content}"
+            
+            response = %{
+              content: mock_content,
+              model: "mock-model",
+              provider: :mock,
+              usage: %{
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15
+              },
+              finish_reason: "stop"
+            }
+            
+            {:ok, response}
+            
           custom_response when is_binary(custom_response) ->
             # Try to resolve variables in the response template
-            # Extract the last user message content for simple variable resolution
-            resolve_mock_variables(custom_response, content)
+            mock_content = resolve_mock_variables(custom_response, content)
+            
+            response = %{
+              content: mock_content,
+              model: "mock-model",
+              provider: :mock,
+              usage: %{
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15
+              },
+              finish_reason: "stop"
+            }
+            
+            {:ok, response}
+            
+          {:error, _} = error_response ->
+            # Return error directly for testing
+            error_response
+            
           custom_response -> 
-            custom_response
+            response = %{
+              content: custom_response,
+              model: "mock-model",
+              provider: :mock,
+              usage: %{
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15
+              },
+              finish_reason: "stop"
+            }
+            
+            {:ok, response}
         end
-        
-        response = %{
-          content: mock_content,
-          model: "mock-model",
-          provider: :mock,
-          usage: %{
-            prompt_tokens: 10,
-            completion_tokens: 5,
-            total_tokens: 15
-          },
-          finish_reason: "stop"
-        }
-        
-        {:ok, response}
     end
   end
   
