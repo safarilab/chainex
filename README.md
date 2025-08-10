@@ -25,15 +25,125 @@ def deps do
 end
 ```
 
-## Quick Start
+Then run:
+
+```bash
+mix deps.get
+```
+
+## Getting Started
+
+### 1. Configuration
+
+Configure your LLM providers in `config/config.exs`:
+
+```elixir
+config :chainex,
+  providers: %{
+    openai: [
+      api_key: System.get_env("OPENAI_API_KEY"),
+      base_url: "https://api.openai.com/v1",
+      default_model: "gpt-4"
+    ],
+    anthropic: [
+      api_key: System.get_env("ANTHROPIC_API_KEY"), 
+      base_url: "https://api.anthropic.com/v1",
+      default_model: "claude-3-opus-20240229"
+    ],
+    ollama: [
+      base_url: "http://localhost:11434",
+      default_model: "llama2"
+    ]
+  },
+  default_provider: :openai
+```
+
+### 2. Your First Chain
 
 ```elixir
 # Simple question answering
 "What is {{topic}}?"
-|> Chain.new()
-|> Chain.llm(:openai)
-|> Chain.run(%{topic: "quantum computing"})
+|> Chainex.Chain.new()
+|> Chainex.Chain.llm(:openai)
+|> Chainex.Chain.run(%{topic: "quantum computing"})
 # => {:ok, "Quantum computing is a revolutionary computing paradigm..."}
+```
+
+### 3. Reusable Templates
+
+Build once, run many times with different variables:
+
+```elixir
+# Define once
+translator = Chainex.Chain.new(
+  system: "You are a professional translator specializing in {{field}}",
+  user: "Translate '{{text}}' from {{from}} to {{to}}"
+)
+|> Chainex.Chain.llm(:anthropic)
+
+# Use many times
+translator |> Chainex.Chain.run(%{field: "medical", text: "headache", from: "English", to: "Spanish"})
+translator |> Chainex.Chain.run(%{field: "legal", text: "contract", from: "English", to: "French"})
+```
+
+### 4. Pipeline Composition
+
+Chain multiple operations together:
+
+```elixir
+"{{content}}"
+|> Chainex.Chain.new()
+|> Chainex.Chain.prompt("Summarize this content: {{input}}")
+|> Chainex.Chain.llm(:openai, model: "gpt-4")
+|> Chainex.Chain.transform(fn summary -> 
+  "Create a title for this summary: #{summary}"
+end)
+|> Chainex.Chain.llm(:anthropic)
+|> Chainex.Chain.run(%{content: "Long article text..."})
+```
+
+### 5. Memory and Context
+
+Build conversational applications:
+
+```elixir
+# Personal assistant with memory
+assistant = Chainex.Chain.new(
+  system: "You are {{user_name}}'s personal assistant. Remember our conversation history.",
+  user: "{{message}}"
+)
+|> Chainex.Chain.with_memory(:conversation)
+|> Chainex.Chain.llm(:openai)
+
+# First interaction
+assistant |> Chainex.Chain.run(%{
+  user_name: "Alice", 
+  message: "Schedule a meeting for tomorrow",
+  session_id: "user_123"
+})
+
+# Second interaction - remembers previous context
+assistant |> Chainex.Chain.run(%{
+  user_name: "Alice", 
+  message: "What time did we schedule it for?",
+  session_id: "user_123"
+})
+```
+
+### 6. Error Handling
+
+Build resilient applications:
+
+```elixir
+# Robust chain with retry, timeout, and fallback
+robust_chain = Chainex.Chain.new("{{user_request}}")
+|> Chainex.Chain.with_retry(max_attempts: 3, delay: 1000)
+|> Chainex.Chain.with_timeout(30_000)
+|> Chainex.Chain.with_fallback("I apologize, but I'm experiencing technical difficulties. Please try again later.")
+|> Chainex.Chain.llm(:openai)
+
+# Always returns {:ok, result} - never fails completely
+{:ok, response} = Chainex.Chain.run(robust_chain, %{user_request: "Help me with this task"})
 ```
 
 ## Core Concepts
@@ -777,9 +887,9 @@ defmodule MyApp.ChainTest do
 end
 ```
 
-## Configuration
+## Advanced Configuration
 
-Configure LLM providers in your `config/config.exs`:
+For basic setup, see the [Getting Started](#getting-started) section above. Here are additional configuration options:
 
 ```elixir
 config :chainex,
@@ -799,9 +909,25 @@ config :chainex,
       default_model: "llama2"
     ]
   },
+  # Global defaults
   default_provider: :openai,
   timeout: 30_000,
-  retries: 3
+  retries: 3,
+  
+  # Memory configuration
+  memory: %{
+    default_type: :conversation,
+    ets_table_name: :chainex_memory,
+    max_entries: 1000,
+    auto_prune: true
+  },
+  
+  # Tool configuration  
+  tools: %{
+    timeout: 10_000,
+    parallel_execution: true,
+    max_concurrent_tools: 5
+  }
 ```
 
 ## Advanced Features
