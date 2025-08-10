@@ -23,6 +23,7 @@ defmodule Chainex.MixProject do
       homepage_url: "https://github.com/your-org/chainex",
       docs: [
         main: "getting_started",
+        logo: "logo.png",
         extras: [
           "README.md",
           "CHANGELOG.md",
@@ -74,7 +75,7 @@ defmodule Chainex.MixProject do
           "Documentation" => "https://hexdocs.pm/chainex"
         },
         maintainers: ["Your Name"],
-        files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md)
+        files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md logo.png)
       ]
     ]
   end

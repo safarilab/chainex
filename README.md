@@ -1,4 +1,17 @@
-# Chainex 🔗
+<div align="center">
+  <img src="logo.png" alt="Chainex Logo" width="200"/>
+  
+  # Chainex 🔗
+  
+  **A powerful Elixir library for building LLM-powered applications**
+  
+  [![Hex.pm](https://img.shields.io/hexpm/v/chainex.svg)](https://hex.pm/packages/chainex)
+  [![Documentation](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/chainex)
+  [![License](https://img.shields.io/hexpm/l/chainex.svg)](https://github.com/your-username/chainex/blob/main/LICENSE)
+  [![Elixir CI](https://img.shields.io/badge/elixir-%E2%89%A5%201.18-purple.svg)](https://elixir-lang.org/)
+</div>
+
+---
 
 A powerful Elixir library for building LLM-powered applications with a fluent, pipeline-based API. Chain together multiple LLMs, tools, and transformations to create sophisticated AI workflows.
 
