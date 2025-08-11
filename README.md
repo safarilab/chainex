@@ -51,24 +51,22 @@ mix deps.get
 Configure your LLM providers in `config/config.exs`:
 
 ```elixir
-config :chainex,
-  providers: %{
-    openai: [
-      api_key: System.get_env("OPENAI_API_KEY"),
-      base_url: "https://api.openai.com/v1",
-      default_model: "gpt-4"
-    ],
-    anthropic: [
-      api_key: System.get_env("ANTHROPIC_API_KEY"), 
-      base_url: "https://api.anthropic.com/v1",
-      default_model: "claude-3-opus-20240229"
-    ],
-    ollama: [
-      base_url: "http://localhost:11434",
-      default_model: "llama2"
-    ]
-  },
-  default_provider: :openai
+config :chainex, Chainex.LLM,
+  default_provider: :anthropic,
+  anthropic: [
+    api_key: {:system, "ANTHROPIC_API_KEY"},
+    model: "claude-3-5-sonnet-20241022",
+    base_url: "https://api.anthropic.com/v1",
+    version: "2023-06-01"
+  ],
+  openai: [
+    api_key: {:system, "OPENAI_API_KEY"},
+    model: "gpt-4",
+    base_url: "https://api.openai.com/v1"
+  ],
+  mock: [
+    model: "mock-model"
+  ]
 ```
 
 ### 2. Your First Chain
