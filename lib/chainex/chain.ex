@@ -23,10 +23,27 @@ defmodule Chainex.Chain do
     :system_prompt,
     :user_prompt,
     :steps,
-    :options
+    :options,
+    :initial_state,
+    :persist_to
   ]
 
-  @type step_type :: :llm | :transform | :prompt | :tool | :parse | :conditional
+  @type step_type ::
+          :llm
+          | :transform
+          | :prompt
+          | :tool
+          | :parse
+          | :conditional
+          | :store_as
+          | :get
+          | :update
+          | :when
+          | :otherwise
+          | :loop
+          | :await
+          | :parallel
+          | :execute_tools
   @type step :: {step_type(), any(), keyword()}
   @type variables :: %{atom() => any()} | %{String.t() => any()}
 
@@ -34,7 +51,9 @@ defmodule Chainex.Chain do
           system_prompt: String.t() | nil,
           user_prompt: String.t() | any(),
           steps: [step()],
-          options: keyword()
+          options: keyword(),
+          initial_state: map() | nil,
+          persist_to: :ets | :database | module() | nil
         }
 
   # Chain creation functions
@@ -60,7 +79,9 @@ defmodule Chainex.Chain do
       system_prompt: nil,
       user_prompt: user_message,
       steps: [],
-      options: []
+      options: [],
+      initial_state: nil,
+      persist_to: nil
     }
   end
 
@@ -69,7 +90,9 @@ defmodule Chainex.Chain do
       system_prompt: Keyword.get(opts, :system),
       user_prompt: Keyword.get(opts, :user, ""),
       steps: [],
-      options: Keyword.delete(opts, :system) |> Keyword.delete(:user)
+      options: Keyword.delete(opts, :system) |> Keyword.delete(:user),
+      initial_state: nil,
+      persist_to: nil
     }
   end
 
@@ -510,5 +533,300 @@ defmodule Chainex.Chain do
   def with_session(%__MODULE__{} = chain, session_id) when is_binary(session_id) do
     updated_options = Keyword.put(chain.options, :session_id, session_id)
     %{chain | options: updated_options}
+  end
+
+  # State Management Functions
+
+  @doc """
+  Stores the result of the previous step in state under the given key.
+
+  The stored value can be accessed in subsequent steps using `{{key}}` templates.
+
+  ## Examples
+
+      chain
+      |> Chain.llm(:anthropic)
+      |> Chain.store_as(:research)
+      |> Chain.llm(:openai, system: "Summarize: {{research}}")
+  """
+  @spec store_as(t(), atom()) :: t()
+  def store_as(%__MODULE__{} = chain, key) when is_atom(key) do
+    step = {:store_as, key, []}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Gets a value from state and makes it the current input.
+
+  ## Examples
+
+      chain
+      |> Chain.get(:saved_value)
+      |> Chain.transform(&process/1)
+  """
+  @spec get(t(), atom()) :: t()
+  def get(%__MODULE__{} = chain, key) when is_atom(key) do
+    step = {:get, key, []}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Updates a value in state using an update function.
+
+  ## Examples
+
+      chain
+      |> Chain.update(:counter, fn count -> count + 1 end)
+  """
+  @spec update(t(), atom(), function()) :: t()
+  def update(%__MODULE__{} = chain, key, update_fn) when is_atom(key) and is_function(update_fn, 1) do
+    step = {:update, key, [update_fn: update_fn]}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Configures where state should be persisted.
+
+  ## Options
+
+    * `:ets` - In-memory storage (fast, non-persistent)
+    * `:database` - Ecto-based storage (persistent)
+    * Custom module - Any module implementing `Chainex.Chain.Store` behaviour
+
+  ## Examples
+
+      chain |> Chain.persist_to(:ets)
+      chain |> Chain.persist_to(:database)
+      chain |> Chain.persist_to(MyApp.RedisStore)
+  """
+  @spec persist_to(t(), :ets | :database | module()) :: t()
+  def persist_to(%__MODULE__{} = chain, backend) do
+    %{chain | persist_to: backend}
+  end
+
+  # Control Flow Functions
+
+  @doc """
+  Executes a chain or builder function if the condition is true.
+
+  Multiple `when` calls can be chained together - the first matching condition wins.
+  Use `otherwise` to provide a fallback for when no conditions match.
+
+  ## Examples
+
+      # Simple condition with chain
+      chain
+      |> Chain.when(&(&1.urgent?), urgent_chain)
+      |> Chain.otherwise(normal_chain)
+
+      # Multiple conditions
+      chain
+      |> Chain.when(&(&1.type == "billing"), billing_chain)
+      |> Chain.when(&(&1.type == "tech"), tech_chain)
+      |> Chain.otherwise(general_chain)
+
+      # Inline builder function
+      chain
+      |> Chain.when(&(&1.needs_review?), fn c ->
+        c |> Chain.await(:approval) |> Chain.llm(:anthropic)
+      end)
+  """
+  @spec when(t(), function(), t() | function()) :: t()
+  def when(%__MODULE__{} = chain, condition, chain_or_builder)
+      when is_function(condition) do
+    step = {:when, condition, [chain_or_builder: chain_or_builder]}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Provides a fallback for when no `when` conditions match.
+
+  ## Examples
+
+      chain
+      |> Chain.when(&(&1.urgent?), urgent_chain)
+      |> Chain.otherwise(default_chain)
+
+      # Pass through unchanged
+      chain
+      |> Chain.when(&(&1.special?), special_chain)
+      |> Chain.otherwise(&(&1))
+  """
+  @spec otherwise(t(), t() | function()) :: t()
+  def otherwise(%__MODULE__{} = chain, chain_or_builder) do
+    step = {:otherwise, chain_or_builder, []}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Loops while a condition is true.
+
+  ## Options
+
+    * `:max_iterations` - Maximum number of iterations (default: 10)
+
+  ## Examples
+
+      # Loop until quality score is high enough
+      chain
+      |> Chain.loop(
+        fn result, _state -> result.score < 0.8 end,
+        fn c -> c |> Chain.llm(:anthropic) |> Chain.transform(&score/1) end,
+        max_iterations: 5
+      )
+
+      # Agentic tool loop
+      chain
+      |> Chain.loop(
+        fn result, _state -> result.tool_calls != nil end,
+        fn c -> c |> Chain.execute_tools() |> Chain.llm(:anthropic) end,
+        max_iterations: 10
+      )
+  """
+  @spec loop(t(), function(), function(), keyword()) :: t()
+  def loop(%__MODULE__{} = chain, condition, body_builder, opts \\ [])
+      when is_function(condition) and is_function(body_builder) do
+    step = {:loop, condition, [body_builder: body_builder] ++ opts}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Pauses the chain execution and waits for human input.
+
+  When the chain encounters this step, it pauses and waits for `resume/2`
+  to be called with the awaited input.
+
+  ## Examples
+
+      chain
+      |> Chain.llm(:anthropic)
+      |> Chain.await(:human_review)
+      |> Chain.llm(:anthropic, system: "Incorporate feedback: {{human_review}}")
+      |> Chain.run_async(vars)
+
+      # Later
+      Chain.resume(instance_id, %{human_review: "Looks good!"})
+  """
+  @spec await(t(), atom()) :: t()
+  def await(%__MODULE__{} = chain, key) when is_atom(key) do
+    step = {:await, key, []}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Executes multiple branches in parallel and collects results.
+
+  Each branch receives the same input and runs concurrently.
+  Results are collected as a list in the order of the branches.
+
+  ## Examples
+
+      chain
+      |> Chain.parallel([
+        fn c -> c |> Chain.llm(:anthropic, system: "Sentiment analysis") end,
+        fn c -> c |> Chain.llm(:openai, system: "Entity extraction") end,
+        fn c -> c |> Chain.llm(:anthropic, system: "Summarization") end
+      ])
+      |> Chain.transform(fn [sentiment, entities, summary] ->
+        %{sentiment: sentiment, entities: entities, summary: summary}
+      end)
+  """
+  @spec parallel(t(), [function()]) :: t()
+  def parallel(%__MODULE__{} = chain, builder_fns) when is_list(builder_fns) do
+    step = {:parallel, builder_fns, []}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  @doc """
+  Executes tool calls from the previous LLM response.
+
+  This is used in agentic loops where the LLM decides which tools to call.
+
+  ## Examples
+
+      chain
+      |> Chain.with_tools([calculator, search])
+      |> Chain.llm(:anthropic, tool_choice: :auto)
+      |> Chain.execute_tools()
+      |> Chain.store_as(:tool_results)
+  """
+  @spec execute_tools(t()) :: t()
+  def execute_tools(%__MODULE__{} = chain) do
+    step = {:execute_tools, nil, []}
+    %{chain | steps: chain.steps ++ [step]}
+  end
+
+  # Async Execution Functions
+
+  @doc """
+  Executes the chain asynchronously with state tracking.
+
+  Returns an instance_id that can be used to:
+  - Check execution status with `get_state/1`
+  - Pause execution with `pause/1`
+  - Resume execution with `resume/2`
+
+  ## Examples
+
+      {:ok, instance_id} = chain |> Chain.run_async(%{topic: "AI"})
+
+      # Check status
+      {:ok, state} = Chain.get_state(instance_id)
+
+      # Pause if needed
+      :ok = Chain.pause(instance_id)
+
+      # Resume later
+      {:ok, result, final_state} = Chain.resume(instance_id, %{extra: "data"})
+  """
+  @spec run_async(t(), variables()) :: {:ok, String.t()} | {:error, any()}
+  def run_async(%__MODULE__{} = chain, variables \\ %{}) do
+    Chainex.Chain.Instance.start(chain, variables)
+  end
+
+  @doc """
+  Gets the current state of an async chain execution.
+
+  ## Examples
+
+      {:ok, state} = Chain.get_state(instance_id)
+      IO.inspect(state.status)  # :running, :paused, :completed, :failed
+      IO.inspect(state.data)    # Accumulated state data
+  """
+  @spec get_state(String.t()) :: {:ok, Chainex.Chain.State.t()} | {:error, any()}
+  def get_state(instance_id) when is_binary(instance_id) do
+    Chainex.Chain.Instance.get_state(instance_id)
+  end
+
+  @doc """
+  Pauses an async chain execution.
+
+  The chain will pause at the next step boundary and can be resumed later.
+
+  ## Examples
+
+      :ok = Chain.pause(instance_id)
+  """
+  @spec pause(String.t()) :: :ok | {:error, any()}
+  def pause(instance_id) when is_binary(instance_id) do
+    Chainex.Chain.Instance.pause(instance_id)
+  end
+
+  @doc """
+  Resumes a paused async chain execution.
+
+  Optionally pass new variables to merge into the state.
+
+  ## Examples
+
+      # Resume without new data
+      {:ok, result, state} = Chain.resume(instance_id)
+
+      # Resume with new data (e.g., human input)
+      {:ok, result, state} = Chain.resume(instance_id, %{human_review: "Approved"})
+  """
+  @spec resume(String.t(), variables()) :: {:ok, any(), Chainex.Chain.State.t()} | {:error, any()}
+  def resume(instance_id, new_variables \\ %{}) when is_binary(instance_id) do
+    Chainex.Chain.Instance.resume(instance_id, new_variables)
   end
 end

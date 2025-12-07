@@ -1351,4 +1351,17 @@ defmodule Chainex.Chain.Executor do
         {:ok, fallback}
     end
   end
+
+  # Public API for Instance module
+
+  @doc """
+  Executes a single step with the given input, chain context, and variables.
+
+  This is used by `Chainex.Chain.Instance` for async execution.
+  """
+  @spec execute_single_step(Chain.step(), any(), Chain.t(), variables()) ::
+          {:ok, any()} | {:error, any()}
+  def execute_single_step(step, input, chain, variables) do
+    execute_step(step, input, chain, variables)
+  end
 end
