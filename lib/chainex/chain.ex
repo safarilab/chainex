@@ -609,32 +609,32 @@ defmodule Chainex.Chain do
   @doc """
   Executes a chain or builder function if the condition is true.
 
-  Multiple `when` calls can be chained together - the first matching condition wins.
+  Multiple `condition` calls can be chained together - the first matching condition wins.
   Use `otherwise` to provide a fallback for when no conditions match.
 
   ## Examples
 
       # Simple condition with chain
       chain
-      |> Chain.when(&(&1.urgent?), urgent_chain)
+      |> Chain.condition(&(&1.urgent?), urgent_chain)
       |> Chain.otherwise(normal_chain)
 
       # Multiple conditions
       chain
-      |> Chain.when(&(&1.type == "billing"), billing_chain)
-      |> Chain.when(&(&1.type == "tech"), tech_chain)
+      |> Chain.condition(&(&1.type == "billing"), billing_chain)
+      |> Chain.condition(&(&1.type == "tech"), tech_chain)
       |> Chain.otherwise(general_chain)
 
       # Inline builder function
       chain
-      |> Chain.when(&(&1.needs_review?), fn c ->
+      |> Chain.condition(&(&1.needs_review?), fn c ->
         c |> Chain.await(:approval) |> Chain.llm(:anthropic)
       end)
   """
-  @spec when(t(), function(), t() | function()) :: t()
-  def when(%__MODULE__{} = chain, condition, chain_or_builder)
-      when is_function(condition) do
-    step = {:when, condition, [chain_or_builder: chain_or_builder]}
+  @spec condition(t(), function(), t() | function()) :: t()
+  def condition(%__MODULE__{} = chain, condition_fn, chain_or_builder)
+      when is_function(condition_fn) do
+    step = {:when, condition_fn, [chain_or_builder: chain_or_builder]}
     %{chain | steps: chain.steps ++ [step]}
   end
 

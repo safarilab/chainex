@@ -462,15 +462,13 @@ defmodule Chainex.Chain.Instance do
     {:via, Registry, {@registry, instance_id}}
   end
 
-  defp resume_from_store(instance_id, new_variables) do
-    case Store.load(instance_id) do
-      {:ok, state} ->
-        # TODO: Implement restarting from stored state
-        {:error, :not_implemented}
-
-      {:error, _} = error ->
-        error
-    end
+  defp resume_from_store(_instance_id, _new_variables) do
+    # TODO: Implement restarting from stored state
+    # This would involve:
+    # 1. Loading state from store
+    # 2. Starting a new GenServer with that state
+    # 3. Resuming execution from the paused step
+    {:error, :not_implemented}
   end
 
   # Child spec for supervisor

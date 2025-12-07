@@ -42,9 +42,9 @@ State is a first-class citizen in every chain:
 
 ## Control Flow
 
-### Fluent Guards (when/otherwise)
+### Fluent Guards (condition/otherwise)
 
-Use `when/3` for conditional execution and `otherwise/2` for fallbacks:
+Use `condition/3` for conditional execution and `otherwise/2` for fallbacks:
 
 ```elixir
 # Simple condition
@@ -52,20 +52,20 @@ Use `when/3` for conditional execution and `otherwise/2` for fallbacks:
 |> Chain.new()
 |> Chain.llm(:anthropic)
 |> Chain.parse(:json, %{category: :string})
-|> Chain.when(&(&1.category == "urgent"), urgent_chain)
+|> Chain.condition(&(&1.category == "urgent"), urgent_chain)
 |> Chain.otherwise(normal_chain)
 |> Chain.run(vars)
 
 # Multiple conditions (first match wins)
 chain
-|> Chain.when(&(&1.type == "billing"), billing_chain)
-|> Chain.when(&(&1.type == "tech"), tech_chain)
-|> Chain.when(&(&1.priority == "high"), escalation_chain)
+|> Chain.condition(&(&1.type == "billing"), billing_chain)
+|> Chain.condition(&(&1.type == "tech"), tech_chain)
+|> Chain.condition(&(&1.priority == "high"), escalation_chain)
 |> Chain.otherwise(general_chain)
 
 # Inline builder function
 chain
-|> Chain.when(&(&1.needs_review?), fn c ->
+|> Chain.condition(&(&1.needs_review?), fn c ->
     c
     |> Chain.await(:approval)
     |> Chain.llm(:anthropic, system: "Incorporate feedback")
@@ -268,8 +268,8 @@ chain |> Chain.persist_to(MyApp.RedisStore)
 
 ### Control Flow
 
-- `Chain.when(chain, condition, chain_or_builder)` - Conditional execution
-- `Chain.otherwise(chain, chain_or_builder)` - Fallback for when
+- `Chain.condition(chain, condition, chain_or_builder)` - Conditional execution
+- `Chain.otherwise(chain, chain_or_builder)` - Fallback for condition
 - `Chain.loop(chain, condition, body_builder, opts)` - Loop while condition true
 - `Chain.await(chain, key)` - Pause for human input
 - `Chain.parallel(chain, [builder_fns])` - Parallel execution
